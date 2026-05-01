@@ -184,29 +184,6 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-2">
-          {isEditing ? (
-            <button
-              type="button"
-              onClick={exitEditMode}
-              disabled={busy}
-              className="inline-flex items-center gap-1 rounded border border-amber-500 bg-amber-500 px-2 py-0.5 text-[11px] font-medium text-white shadow-sm hover:bg-amber-600 disabled:opacity-60"
-              title="編集を終了して通常モードに戻る"
-            >
-              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-              <span>編集を終了</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={enterEditMode}
-              disabled={busy}
-              className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100 disabled:opacity-60"
-              title="スケジュール枠 (テンプレ) を編集する"
-            >
-              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <LayoutGrid className="h-3 w-3" />}
-              <span>枠を編集</span>
-            </button>
-          )}
           <AccountBadge />
         </div>
       </header>
@@ -237,8 +214,32 @@ export default function Home() {
       />
 
       <footer className="fixed right-0 bottom-0 left-0 z-[60] flex h-9 items-center justify-between gap-3 border-t border-slate-200 bg-white/90 px-3 backdrop-blur-sm">
-        {/* 左: 空 (右のトグルとバランスを取るためのスペーサー) */}
-        <div />
+        {/* 左: テンプレ枠 (スケジュール) の編集モード切替 */}
+        <div className="flex items-center gap-2">
+          {isEditing ? (
+            <button
+              type="button"
+              onClick={exitEditMode}
+              disabled={busy}
+              className="inline-flex items-center gap-1 rounded border border-amber-500 bg-amber-500 px-2 py-0.5 text-[11px] font-medium text-white shadow-sm hover:bg-amber-600 disabled:opacity-60"
+              title="編集を終了して通常モードに戻る"
+            >
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+              <span>編集を終了</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={enterEditMode}
+              disabled={busy}
+              className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+              title="スケジュール枠 (テンプレ) を編集する"
+            >
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <LayoutGrid className="h-3 w-3" />}
+              <span>枠を編集</span>
+            </button>
+          )}
+        </div>
 
         {/* 中央: カード操作 (パレットは WhiteboardCanvas から portal で挿入される)。
             header の週ナビと同じ pattern で absolute 中央寄せ。 */}
