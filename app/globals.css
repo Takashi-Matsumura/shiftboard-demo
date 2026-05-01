@@ -24,3 +24,11 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Excalidraw のツール群 (上部シェイプツールバー / 左上メニュー / 右上ライブラリ /
+   左下ズームコントロール / フッターバー / ヘルプボタン等) を全部隠して、
+   キャンバスだけが見えるようにする。zen mode だけだと隠しきれない要素を CSS で潰す。
+   ツール ON のときはこのクラスを外して通常表示に戻す。 */
+.shiftboard-tools-hidden .excalidraw .layer-ui__wrapper {
+  display: none !important;
+}
