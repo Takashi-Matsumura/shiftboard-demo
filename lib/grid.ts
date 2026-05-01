@@ -40,7 +40,7 @@ export const GRID = {
   // セル下端からの余白も大きめにしてセル枠線と重ならないようにする。
   dateLabelWidth: 40, // text 領域の幅
   dateLabelHeight: 18,
-  dateLabelInset: 8, // セル右端・下端からの余白
+  dateLabelInset: 16, // セル右端・下端からの余白
 } as const;
 
 type AnyElement = Record<string, unknown>;
