@@ -1,0 +1,50 @@
+// shiftboard-demo: User / Session / Whiteboard の最小スキーマ
+// Whiteboard.elements / appState は SQLite に Json 型がないため
+// String で持ち、API 層で JSON.stringify / parse する。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model User {
+  id           String   @id @default(cuid())
+  username     String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  sessions     Session[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ステーション全員で 1 枚を共有する単一行モデル。id は固定の "default"。
+model Whiteboard {
+  id        String   @id @default("default")
+  elements  String
+  appState  String
+  updatedAt DateTime @updatedAt
+}
+
+// スケジュール枠テンプレ。シングルトン (id="default") で 1 種類のみ。
+// editingBy が非 null なら誰かが編集モード中で、その間 Whiteboard への書き込みはロックされる。
+model Template {
+  id               String    @id @default("default")
+  elements         String    // grid 要素 (locked: true) を JSON.stringify した配列
+  editingBy        String?   // 編集中ユーザの id。null なら開放されている
+  editingStartedAt DateTime? // 自動解放のための参考用 (現状は手動解放のみ)
+  updatedAt        DateTime  @updatedAt
+}

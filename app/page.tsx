@@ -1,65 +1,179 @@
-import Image from "next/image";
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
+import { Loader2, LayoutGrid, Save, X } from "lucide-react";
+import { AccountBadge } from "./components/account-badge";
+
+const WhiteboardCanvas = dynamic(
+  () => import("./components/whiteboard-canvas"),
+  { ssr: false },
+);
+
+type Mode = "view" | "edit-template";
 
 export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+  const router = useRouter();
+  // proxy.ts は Cookie の存在しか見ないため、無効 Cookie でも / が描画される。
+  // クライアント側で /api/auth/me を呼んで user が null なら /login へ送る。
+  const [authState, setAuthState] = useState<"loading" | "authed">("loading");
+  const [mode, setMode] = useState<Mode>("view");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data?.user) {
+          setAuthState("authed");
+        } else {
+          router.replace("/login");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) router.replace("/login");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
+
+  // ページ離脱時にロックを残さないよう、unmount で unlock を試みる
+  useEffect(() => {
+    if (mode !== "edit-template") return;
+    const onUnload = () => {
+      // keepalive で fire-and-forget。失敗しても editingStartedAt から手動回復する。
+      try {
+        fetch("/api/template/unlock", { method: "POST", keepalive: true });
+      } catch {}
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onUnload);
+    };
+  }, [mode]);
+
+  const enterEditMode = useCallback(async () => {
+    if (busy) return;
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await fetch("/api/template/lock", { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? `ロック取得に失敗しました (${res.status})`);
+        return;
+      }
+      setMode("edit-template");
+    } catch (err) {
+      setError((err as Error).message ?? "ネットワークエラー");
+    } finally {
+      setBusy(false);
+    }
+  }, [busy]);
+
+  const exitEditMode = useCallback(async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      // 編集内容は debounce 済みで PUT 済みのはず。確実に flush するため少し待つ。
+      await new Promise((r) => setTimeout(r, 200));
+      await fetch("/api/template/unlock", { method: "POST" });
+    } catch {
+      // 失敗しても view へ戻す (ロックは editingStartedAt から手動回復)
+    } finally {
+      setMode("view");
+      setBusy(false);
+    }
+  }, [busy]);
+
+  const handleLockLost = useCallback(() => {
+    setError("他のユーザがテンプレ編集中のため書き込めませんでした");
+  }, []);
+
+  if (authState === "loading") {
+    return (
+      <main className="fixed inset-0 flex items-center justify-center bg-neutral-50">
+        <Loader2 className="h-5 w-5 animate-spin text-neutral-500" />
       </main>
-    </div>
+    );
+  }
+
+  const isEditing = mode === "edit-template";
+
+  return (
+    <main className="fixed inset-0 overflow-hidden">
+      <header
+        className={`fixed top-0 right-0 left-0 z-[60] flex h-9 items-center justify-between border-b px-3 backdrop-blur-sm ${
+          isEditing
+            ? "border-amber-300 bg-amber-50/95"
+            : "border-slate-200 bg-white/90"
+        }`}
+      >
+        <div className="flex items-center gap-3">
+          <span className="font-mono text-xs font-medium text-slate-700">
+            shiftboard-demo
+          </span>
+          {isEditing ? (
+            <span className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+              テンプレ編集モード
+            </span>
+          ) : null}
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isEditing ? (
+            <button
+              type="button"
+              onClick={exitEditMode}
+              disabled={busy}
+              className="inline-flex items-center gap-1 rounded border border-amber-500 bg-amber-500 px-2 py-0.5 text-[11px] font-medium text-white shadow-sm hover:bg-amber-600 disabled:opacity-60"
+              title="編集を終了して通常モードに戻る"
+            >
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+              <span>編集を終了</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={enterEditMode}
+              disabled={busy}
+              className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+              title="スケジュール枠 (テンプレ) を編集する"
+            >
+              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <LayoutGrid className="h-3 w-3" />}
+              <span>枠を編集</span>
+            </button>
+          )}
+          <AccountBadge />
+        </div>
+      </header>
+
+      {error ? (
+        <div className="fixed top-12 left-1/2 z-[70] -translate-x-1/2 transform">
+          <div className="flex items-center gap-2 rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-xs text-red-700 shadow-md">
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="rounded p-0.5 text-red-600 hover:bg-red-100"
+              title="閉じる"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      <WhiteboardCanvas
+        mode={mode}
+        topOffset={36}
+        onLockLost={handleLockLost}
+      />
+    </main>
   );
 }
