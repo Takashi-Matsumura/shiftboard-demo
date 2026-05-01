@@ -10,6 +10,7 @@ import {
   Loader2,
   LayoutGrid,
   Save,
+  Wrench,
   X,
 } from "lucide-react";
 import { AccountBadge } from "./components/account-badge";
@@ -32,6 +33,9 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   // 表示する週を「今週」からの相対オフセットで管理。0=今週、-1=先週、+1=来週。
   const [weekOffset, setWeekOffset] = useState(0);
+  // Excalidraw のツール群 (上部ツールバー・メニュー等) の表示。デフォルトは非表示。
+  // ON にすると Excalidraw 標準の zen mode を解除し、シェイプツールやメニューが出る。
+  const [showTools, setShowTools] = useState(false);
 
   const weekLabel = useMemo(() => {
     const target = new Date();
@@ -227,8 +231,39 @@ export default function Home() {
         mode={mode}
         weekOffset={weekOffset}
         topOffset={36}
+        bottomOffset={36}
+        showTools={showTools}
         onLockLost={handleLockLost}
       />
+
+      <footer className="fixed right-0 bottom-0 left-0 z-[60] flex h-9 items-center justify-between gap-3 border-t border-slate-200 bg-white/90 px-3 backdrop-blur-sm">
+        {/* 左/中央: カード操作 (パレットは WhiteboardCanvas から portal で挿入される) */}
+        <div className="flex flex-1 items-center gap-2 overflow-hidden">
+          <span className="font-mono text-[10px] font-medium text-slate-500">
+            カード操作
+          </span>
+          <div
+            id="card-palette-slot"
+            className="flex flex-1 items-center justify-start"
+          />
+        </div>
+
+        {/* 右: Excalidraw ツール群の表示トグル */}
+        <button
+          type="button"
+          onClick={() => setShowTools((v) => !v)}
+          className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
+            showTools
+              ? "border-slate-700 bg-slate-700 text-white hover:bg-slate-800"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+          }`}
+          title="Excalidraw のツールバー・メニューの表示を切り替える"
+          aria-pressed={showTools}
+        >
+          <Wrench className="h-3 w-3" />
+          <span>ツール {showTools ? "ON" : "OFF"}</span>
+        </button>
+      </footer>
     </main>
   );
 }
