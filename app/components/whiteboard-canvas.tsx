@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Excalidraw, getSceneVersion } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
-import { buildGridElements, isGridElement, stripGridElements } from "@/lib/grid";
+import {
+  buildDateOverlayElements,
+  buildGridElements,
+  isGridFrameElement,
+  stripGridElements,
+} from "@/lib/grid";
 
 const SAVE_DEBOUNCE_MS = 1500;
 
@@ -16,10 +21,13 @@ export type WhiteboardCanvasMode = "view" | "edit-template";
 
 export default function WhiteboardCanvas({
   mode = "view",
+  weekOffset = 0,
   topOffset = 0,
   onLockLost,
 }: {
   mode?: WhiteboardCanvasMode;
+  // 表示する週を「今週」からの相対オフセット (週単位) で指定。0=今週、-1=先週、+1=来週
+  weekOffset?: number;
   topOffset?: number;
   onLockLost?: () => void;
 }) {
@@ -53,6 +61,12 @@ export default function WhiteboardCanvas({
 
     let cancel = false;
 
+    // 動的メタ (各曜日の日付ラベル) は weekOffset を加味した日付で生成して常に inject。
+    // mode に関係なく locked のまま表示し、保存対象にも含めない。
+    const targetDate = new Date();
+    targetDate.setDate(targetDate.getDate() + weekOffset * 7);
+    const dateOverlay = buildDateOverlayElements(targetDate);
+
     async function loadView() {
       // 通常モード: テンプレ + ユーザ書き込みをマージして表示。
       // テンプレが DB に無ければ lib/grid.ts のデフォルトを使う。
@@ -80,14 +94,16 @@ export default function WhiteboardCanvas({
       lastSavedVersionRef.current = getSceneVersion(userElements as never);
       if (!cancel) {
         setLoaded({
-          elements: [...tplLocked, ...userElements],
+          elements: [...tplLocked, ...dateOverlay, ...userElements],
           appState,
         });
       }
     }
 
     async function loadEdit() {
-      // 編集モード: テンプレを編集対象 (locked: false)、ユーザ書き込みは半透明 readonly で参考表示
+      // 編集モード: テンプレ枠 (grid-v1) を編集対象 (locked: false)。
+      // 動的メタ (grid-meta-v1) は常に locked のまま表示 (編集できない)。
+      // ユーザ書き込みは半透明 readonly で参考表示。
       const [tplRes, wbRes] = await Promise.all([
         fetch("/api/template"),
         fetch("/api/whiteboard"),
@@ -100,11 +116,11 @@ export default function WhiteboardCanvas({
       const tplElems = Array.isArray(tpl?.elements) && tpl.elements.length > 0
         ? tpl.elements
         : buildGridElements();
-      // 編集対象は unlock
-      const tplEditable = (tplElems as Array<Record<string, unknown>>).map((el) => ({
-        ...el,
-        locked: false,
-      }));
+      // テンプレ枠だけ unlock。万一 DB に grid-meta が紛れていても unlock しないよう、
+      // frame 判定に当てはまるものだけ touch する。
+      const tplEditable = (tplElems as Array<Record<string, unknown>>).map((el) =>
+        isGridFrameElement(el) ? { ...el, locked: false } : el,
+      );
 
       const userRaw = Array.isArray(wb?.elements) ? wb.elements : [];
       // 参考表示用: 半透明 + locked
@@ -114,11 +130,12 @@ export default function WhiteboardCanvas({
         locked: true,
       }));
 
-      // 編集モードでは template 要素のバージョンで差分判定
-      lastSavedVersionRef.current = getSceneVersion(tplElems as never);
+      // 編集モードでは frame 要素のみで version を取って差分判定する
+      const tplFrameOnly = tplEditable.filter(isGridFrameElement);
+      lastSavedVersionRef.current = getSceneVersion(tplFrameOnly as never);
       if (!cancel) {
         setLoaded({
-          elements: [...userFrozen, ...tplEditable],
+          elements: [...userFrozen, ...tplEditable, ...dateOverlay],
           appState: {},
         });
       }
@@ -129,7 +146,10 @@ export default function WhiteboardCanvas({
       console.warn("[whiteboard] load failed", err);
       if (!cancel) {
         lastSavedVersionRef.current = getSceneVersion([] as never);
-        setLoaded({ elements: buildGridElements(), appState: {} });
+        setLoaded({
+          elements: [...buildGridElements(), ...dateOverlay],
+          appState: {},
+        });
         setLoadError(true);
       }
     });
@@ -137,7 +157,7 @@ export default function WhiteboardCanvas({
     return () => {
       cancel = true;
     };
-  }, [mode]);
+  }, [mode, weekOffset]);
 
   const flushSave = useCallback(() => {
     const pending = pendingRef.current;
@@ -184,9 +204,9 @@ export default function WhiteboardCanvas({
       const currentMode = modeRef.current;
 
       if (currentMode === "edit-template") {
-        // テンプレ要素のみ抽出 (grid customData を持つもの)
+        // テンプレ枠 (frame) のみ保存対象。動的メタ (meta) は除外。
         const tplOnly = (elements as Array<{ customData?: unknown }>).filter((el) =>
-          isGridElement(el),
+          isGridFrameElement(el),
         );
         const v = getSceneVersion(tplOnly as never);
         if (v === lastSavedVersionRef.current) return;
@@ -195,7 +215,7 @@ export default function WhiteboardCanvas({
         return;
       }
 
-      // 通常モード: ユーザ要素のみ保存
+      // 通常モード: ユーザ要素のみ保存 (frame と meta の両方を除外)
       const userOnly = stripGridElements(elements as readonly { customData?: unknown }[]);
       const v = getSceneVersion(userOnly as never);
       if (v === lastSavedVersionRef.current) return;

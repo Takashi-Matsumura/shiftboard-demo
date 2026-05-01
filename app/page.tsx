@@ -1,10 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
-import { Loader2, LayoutGrid, Save, X } from "lucide-react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  CalendarDays,
+  Loader2,
+  LayoutGrid,
+  Save,
+  X,
+} from "lucide-react";
 import { AccountBadge } from "./components/account-badge";
+import { getISOWeek, getMondayOfWeek } from "@/lib/grid";
 
 const WhiteboardCanvas = dynamic(
   () => import("./components/whiteboard-canvas"),
@@ -21,6 +30,16 @@ export default function Home() {
   const [mode, setMode] = useState<Mode>("view");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 表示する週を「今週」からの相対オフセットで管理。0=今週、-1=先週、+1=来週。
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  const weekLabel = useMemo(() => {
+    const target = new Date();
+    target.setDate(target.getDate() + weekOffset * 7);
+    const monday = getMondayOfWeek(target);
+    const { year, week } = getISOWeek(monday);
+    return `${year}年 第${week}週`;
+  }, [weekOffset]);
 
   useEffect(() => {
     let cancelled = false;
@@ -125,6 +144,41 @@ export default function Home() {
           ) : null}
         </div>
 
+        <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 transform">
+          <div className="pointer-events-auto flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setWeekOffset((w) => w - 1)}
+              className="inline-flex h-6 w-6 items-center justify-center rounded text-slate-600 hover:bg-slate-100"
+              title="前週"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="min-w-[8.5rem] text-center text-xs font-medium tabular-nums text-slate-800">
+              {weekLabel}
+            </span>
+            {weekOffset !== 0 ? (
+              <button
+                type="button"
+                onClick={() => setWeekOffset(0)}
+                className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100"
+                title="今週に戻る"
+              >
+                <CalendarDays className="h-3 w-3" />
+                <span>今週</span>
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setWeekOffset((w) => w + 1)}
+              className="inline-flex h-6 w-6 items-center justify-center rounded text-slate-600 hover:bg-slate-100"
+              title="次週"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
         <div className="flex items-center gap-2">
           {isEditing ? (
             <button
@@ -171,6 +225,7 @@ export default function Home() {
 
       <WhiteboardCanvas
         mode={mode}
+        weekOffset={weekOffset}
         topOffset={36}
         onLockLost={handleLockLost}
       />
