@@ -7,8 +7,10 @@ import {
   buildDateOverlayElements,
   buildGridElements,
   CARD_COLORS,
+  CARD_KIND,
   type CardColorId,
   createCardElement,
+  isCardElement,
   isGridFrameElement,
   snapToHalfHourGrid,
   stripGridElements,
@@ -76,6 +78,13 @@ export default function WhiteboardCanvas({
     null,
   );
   const [cardColor, setCardColor] = useState<CardColorId>("blue");
+
+  // 選択中のカード集合 (id と、全員が同じ色なら uniformColor)。
+  // パレットボタンの押下挙動を「選択あり: 再着色 / 選択なし: デフォルト変更」で切替えるために使う。
+  const [cardSelection, setCardSelection] = useState<{
+    ids: readonly string[];
+    uniformColor: CardColorId | null;
+  }>({ ids: [], uniformColor: null });
 
   const [shiftAlt, setShiftAlt] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -254,6 +263,31 @@ export default function WhiteboardCanvas({
     ) => {
       const currentMode = modeRef.current;
 
+      // 選択中カードの追跡 (view モードのみ意味を持つが、edit-template でも害は無い)
+      const selectedIds = (appState.selectedElementIds ?? {}) as Record<string, boolean>;
+      const selectedCards = (elements as Array<{
+        id?: string;
+        customData?: { kind?: string; color?: string };
+      }>).filter((el) => el.id && selectedIds[el.id] && isCardElement(el));
+      const ids = selectedCards.map((c) => c.id as string);
+      const colorSet = new Set(
+        selectedCards.map((c) => c.customData?.color).filter(Boolean) as string[],
+      );
+      const uniform: CardColorId | null =
+        colorSet.size === 1
+          ? (Array.from(colorSet)[0] as CardColorId)
+          : null;
+      setCardSelection((prev) => {
+        if (
+          prev.ids.length === ids.length &&
+          prev.ids.every((v, i) => v === ids[i]) &&
+          prev.uniformColor === uniform
+        ) {
+          return prev;
+        }
+        return { ids, uniformColor: uniform };
+      });
+
       if (currentMode === "edit-template") {
         // テンプレ枠 (frame) のみ保存対象。動的メタ (meta) は除外。
         const tplOnly = (elements as Array<{ customData?: unknown }>).filter((el) =>
@@ -279,6 +313,46 @@ export default function WhiteboardCanvas({
       scheduleSave(userOnly, savedAppState);
     },
     [scheduleSave],
+  );
+
+  // パレットボタン押下時のハンドラ。
+  //   - カード選択中 → 選択中カードの色を変更
+  //   - 選択なし     → 新規配置時のデフォルト色を変更
+  const handleColorPick = useCallback(
+    (id: CardColorId) => {
+      if (cardSelection.ids.length > 0 && excalidrawAPI) {
+        const palette = CARD_COLORS.find((c) => c.id === id) ?? CARD_COLORS[0];
+        const idsSet = new Set(cardSelection.ids);
+        const elements = excalidrawAPI.getSceneElements();
+        const updated = (
+          elements as Array<Record<string, unknown> & {
+            id?: string;
+            customData?: unknown;
+          }>
+        ).map((el) => {
+            if (!el.id || !idsSet.has(el.id) || !isCardElement(el)) return el;
+            const prevCustom =
+              (el.customData as Record<string, unknown> | undefined) ?? {};
+            return {
+              ...el,
+              strokeColor: palette.stroke,
+              backgroundColor: palette.fill,
+              customData: { ...prevCustom, kind: CARD_KIND, color: id },
+              version: ((el.version as number | undefined) ?? 0) + 1,
+              versionNonce: Math.floor(Math.random() * 2 ** 31),
+              updated: Date.now(),
+            };
+          },
+        );
+        excalidrawAPI.updateScene({ elements: updated });
+        // 全選択中カードが同じ色になるので uniformColor も追従させる
+        setCardSelection((prev) => ({ ...prev, uniformColor: id }));
+        return;
+      }
+      // 選択なし: 次に配置するカードのデフォルト色を変更
+      setCardColor(id);
+    },
+    [cardSelection.ids, excalidrawAPI],
   );
 
   useEffect(() => {
@@ -422,40 +496,56 @@ export default function WhiteboardCanvas({
       {/* ドラッグ中のプレビュー (viewport coords / fixed) */}
       {drag ? <CardPreview drag={drag} colorId={cardColor} /> : null}
 
-      {/* カラーパレット (view モードのみ) */}
-      {cardModeAvailable ? (
-        <div className="pointer-events-auto absolute bottom-3 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-1.5 rounded-md border border-slate-300 bg-white/95 px-2 py-1 shadow-md backdrop-blur-sm">
-          <span className="text-[10px] font-medium text-slate-500">カード色</span>
-          {CARD_COLORS.map((c) => {
-            const selected = cardColor === c.id;
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => setCardColor(c.id)}
-                className={`inline-flex h-5 w-5 items-center justify-center rounded border-2 transition ${
-                  selected
-                    ? "ring-2 ring-slate-700 ring-offset-1"
-                    : "hover:scale-110"
-                }`}
-                style={{ backgroundColor: c.fill, borderColor: c.stroke }}
-                title={c.label}
-                aria-label={`カード色: ${c.label}`}
-              />
-            );
-          })}
-          <span className="ml-1 text-[10px] text-slate-500">
-            <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
-              ⇧
-            </kbd>
-            +
-            <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
-              ⌥
-            </kbd>
-            + ドラッグ
-          </span>
-        </div>
-      ) : null}
+      {/* カラーパレット (view モードのみ)。
+          - 選択中のカードがあれば「再着色」モード: クリックで選択カードの色を変更
+          - 選択なしなら「デフォルト変更」モード: 次に配置するカードの色を変更 */}
+      {cardModeAvailable ? (() => {
+        const recoloring = cardSelection.ids.length > 0;
+        const highlightId = recoloring ? cardSelection.uniformColor : cardColor;
+        return (
+          <div className="pointer-events-auto absolute bottom-3 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-1.5 rounded-md border border-slate-300 bg-white/95 px-2 py-1 shadow-md backdrop-blur-sm">
+            <span
+              className={`text-[10px] font-medium ${
+                recoloring ? "text-amber-700" : "text-slate-500"
+              }`}
+            >
+              {recoloring
+                ? `選択中 ${cardSelection.ids.length} 枚 の色変更`
+                : "カード色"}
+            </span>
+            {CARD_COLORS.map((c) => {
+              const selected = highlightId === c.id;
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => handleColorPick(c.id)}
+                  className={`inline-flex h-5 w-5 items-center justify-center rounded border-2 transition ${
+                    selected
+                      ? "ring-2 ring-slate-700 ring-offset-1"
+                      : "hover:scale-110"
+                  }`}
+                  style={{ backgroundColor: c.fill, borderColor: c.stroke }}
+                  title={c.label}
+                  aria-label={`カード色: ${c.label}`}
+                />
+              );
+            })}
+            {recoloring ? null : (
+              <span className="ml-1 text-[10px] text-slate-500">
+                <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
+                  ⇧
+                </kbd>
+                +
+                <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
+                  ⌥
+                </kbd>
+                + ドラッグ
+              </span>
+            )}
+          </div>
+        );
+      })() : null}
 
       {loadError ? (
         <div className="absolute top-2 right-2 text-[10px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1 shadow-sm">
