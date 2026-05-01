@@ -157,6 +157,17 @@ export default function Home() {
             <span className="min-w-[8.5rem] text-center text-xs font-medium tabular-nums text-slate-800">
               {weekLabel}
             </span>
+            {weekOffset !== 0 ? (
+              <button
+                type="button"
+                onClick={() => setWeekOffset(0)}
+                className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100"
+                title="今週に戻る"
+              >
+                <CalendarDays className="h-3 w-3" />
+                <span>今週</span>
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => setWeekOffset((w) => w + 1)}
@@ -165,17 +176,6 @@ export default function Home() {
             >
               <ChevronRight className="h-4 w-4" />
             </button>
-            {weekOffset !== 0 ? (
-              <button
-                type="button"
-                onClick={() => setWeekOffset(0)}
-                className="ml-1 inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100"
-                title="今週に戻る"
-              >
-                <CalendarDays className="h-3 w-3" />
-                <span>今週</span>
-              </button>
-            ) : null}
           </div>
         </div>
 
