@@ -35,9 +35,12 @@ export const GRID = {
   fontSizeSmall: 11,
   fontFamilyHelvetica: 5, // Excalidraw の FONT_FAMILY.Helvetica
   // 日付ラベルを曜日セルの右下に配置するためのレイアウト指定
-  dateLabelWidth: 36, // text 領域の幅
-  dateLabelHeight: 14,
-  dateLabelInset: 4, // セル右端・下端からの余白
+  // Excalidraw の text element は fontSize に対して高さの実描画が伸びるため
+  // bounding box を fontSize * lineHeight (1.25) より十分大きく取り、
+  // セル下端からの余白も大きめにしてセル枠線と重ならないようにする。
+  dateLabelWidth: 40, // text 領域の幅
+  dateLabelHeight: 18,
+  dateLabelInset: 8, // セル右端・下端からの余白
 } as const;
 
 type AnyElement = Record<string, unknown>;
