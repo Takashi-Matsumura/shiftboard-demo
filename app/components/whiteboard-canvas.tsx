@@ -6,11 +6,17 @@ import "@excalidraw/excalidraw/index.css";
 import {
   buildDateOverlayElements,
   buildGridElements,
+  CARD_COLORS,
+  type CardColorId,
+  createCardElement,
   isGridFrameElement,
+  snapToHalfHourGrid,
   stripGridElements,
 } from "@/lib/grid";
 
 const SAVE_DEBOUNCE_MS = 1500;
+// 30 分グリッド最小サイズ未満のドラッグはクリック扱いで破棄
+const MIN_CARD_SIZE = 16;
 
 type LoadedData = {
   elements: readonly unknown[];
@@ -18,6 +24,24 @@ type LoadedData = {
 } | null;
 
 export type WhiteboardCanvasMode = "view" | "edit-template";
+
+// Excalidraw の imperative API のうち、本コンポーネントで使う部分だけ型定義する。
+type ExcalidrawLikeAPI = {
+  getAppState: () => {
+    scrollX: number;
+    scrollY: number;
+    zoom: { value: number };
+    offsetLeft: number;
+    offsetTop: number;
+  } & Record<string, unknown>;
+  getSceneElements: () => readonly unknown[];
+  updateScene: (data: { elements?: readonly unknown[] }) => void;
+};
+
+type DragState = {
+  startClient: { x: number; y: number };
+  endClient: { x: number; y: number };
+};
 
 export default function WhiteboardCanvas({
   mode = "view",
@@ -46,6 +70,33 @@ export default function WhiteboardCanvas({
 
   // mode 切替時には Excalidraw を完全に再マウントしたいので、key として state に乗せる
   const [mountKey, setMountKey] = useState(0);
+
+  // === カード配置 (Shift+Alt+ドラッグ) =====================================
+  const [excalidrawAPI, setExcalidrawAPI] = useState<ExcalidrawLikeAPI | null>(
+    null,
+  );
+  const [cardColor, setCardColor] = useState<CardColorId>("blue");
+
+  const [shiftAlt, setShiftAlt] = useState(false);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  // window レベルで Shift+Alt 状態を監視。ドラッグ中はオーバーレイの pointer-events を
+  // auto にしてイベントを横取りする。
+  useEffect(() => {
+    const sync = (e: KeyboardEvent) => {
+      setShiftAlt(e.shiftKey && e.altKey);
+    };
+    const onBlur = () => setShiftAlt(false);
+    window.addEventListener("keydown", sync);
+    window.addEventListener("keyup", sync);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("keydown", sync);
+      window.removeEventListener("keyup", sync);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
 
   // モード切替を検知して再ロード
   useEffect(() => {
@@ -245,6 +296,79 @@ export default function WhiteboardCanvas({
     };
   }, [flushSave]);
 
+  // === オーバーレイのポインタ処理 ==========================================
+  // Shift+Alt 押下中のみ pointer-events: auto にしてイベントを横取りする。
+  // ドラッグ開始後はキーが離されてもキャプチャを維持する。
+
+  const cardModeAvailable = mode === "view";
+  const overlayActive = cardModeAvailable && (shiftAlt || drag !== null);
+
+  const handleOverlayPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!cardModeAvailable) return;
+      if (!e.shiftKey || !e.altKey) return;
+      if (!excalidrawAPI || !overlayRef.current) return;
+      e.preventDefault();
+      (e.currentTarget as HTMLDivElement).setPointerCapture(e.pointerId);
+      setDrag({
+        startClient: { x: e.clientX, y: e.clientY },
+        endClient: { x: e.clientX, y: e.clientY },
+      });
+    },
+    [cardModeAvailable, excalidrawAPI],
+  );
+
+  const handleOverlayPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      setDrag((prev) =>
+        prev ? { ...prev, endClient: { x: e.clientX, y: e.clientY } } : prev,
+      );
+    },
+    [],
+  );
+
+  const handleOverlayPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!drag) return;
+      const api = excalidrawAPI;
+      const colorId = cardColor;
+      const startClient = drag.startClient;
+      const endClient = { x: e.clientX, y: e.clientY };
+      setDrag(null);
+      try {
+        (e.currentTarget as HTMLDivElement).releasePointerCapture(e.pointerId);
+      } catch {}
+      if (!api) return;
+      const appState = api.getAppState();
+      const z = appState.zoom?.value ?? 1;
+      // Excalidraw の標準変換: clientX → sceneX
+      //   sceneX = (clientX - offsetLeft) / zoom - scrollX
+      const sx = (startClient.x - appState.offsetLeft) / z - appState.scrollX;
+      const sy = (startClient.y - appState.offsetTop) / z - appState.scrollY;
+      const ex = (endClient.x - appState.offsetLeft) / z - appState.scrollX;
+      const ey = (endClient.y - appState.offsetTop) / z - appState.scrollY;
+      const a = snapToHalfHourGrid(sx, sy);
+      const b = snapToHalfHourGrid(ex, ey);
+      const x = Math.min(a.x, b.x);
+      const y = Math.min(a.y, b.y);
+      const w = Math.abs(b.x - a.x);
+      const h = Math.abs(b.y - a.y);
+      if (w < MIN_CARD_SIZE || h < MIN_CARD_SIZE) return;
+      const card = createCardElement({
+        x,
+        y,
+        width: w,
+        height: h,
+        colorId,
+      });
+      const elements = api.getSceneElements();
+      api.updateScene({ elements: [...elements, card] });
+    },
+    [drag, excalidrawAPI, cardColor],
+  );
+
+  // === レンダリング ========================================================
+
   return (
     <div
       style={{
@@ -262,6 +386,9 @@ export default function WhiteboardCanvas({
       {loaded ? (
         <Excalidraw
           key={mountKey}
+          excalidrawAPI={(api) =>
+            setExcalidrawAPI(api as unknown as ExcalidrawLikeAPI)
+          }
           initialData={{
             elements: loaded.elements as never,
             appState: loaded.appState as never,
@@ -275,11 +402,97 @@ export default function WhiteboardCanvas({
           }
         />
       ) : null}
+
+      {/* カード作成オーバーレイ。Shift+Alt 中のみ pointer-events: auto */}
+      <div
+        ref={overlayRef}
+        onPointerDown={handleOverlayPointerDown}
+        onPointerMove={handleOverlayPointerMove}
+        onPointerUp={handleOverlayPointerUp}
+        onPointerCancel={handleOverlayPointerUp}
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 50,
+          pointerEvents: overlayActive ? "auto" : "none",
+          cursor: overlayActive ? "crosshair" : "default",
+        }}
+      />
+
+      {/* ドラッグ中のプレビュー (viewport coords / fixed) */}
+      {drag ? <CardPreview drag={drag} colorId={cardColor} /> : null}
+
+      {/* カラーパレット (view モードのみ) */}
+      {cardModeAvailable ? (
+        <div className="pointer-events-auto absolute bottom-3 left-1/2 z-[60] flex -translate-x-1/2 items-center gap-1.5 rounded-md border border-slate-300 bg-white/95 px-2 py-1 shadow-md backdrop-blur-sm">
+          <span className="text-[10px] font-medium text-slate-500">カード色</span>
+          {CARD_COLORS.map((c) => {
+            const selected = cardColor === c.id;
+            return (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => setCardColor(c.id)}
+                className={`inline-flex h-5 w-5 items-center justify-center rounded border-2 transition ${
+                  selected
+                    ? "ring-2 ring-slate-700 ring-offset-1"
+                    : "hover:scale-110"
+                }`}
+                style={{ backgroundColor: c.fill, borderColor: c.stroke }}
+                title={c.label}
+                aria-label={`カード色: ${c.label}`}
+              />
+            );
+          })}
+          <span className="ml-1 text-[10px] text-slate-500">
+            <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
+              ⇧
+            </kbd>
+            +
+            <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
+              ⌥
+            </kbd>
+            + ドラッグ
+          </span>
+        </div>
+      ) : null}
+
       {loadError ? (
         <div className="absolute top-2 right-2 text-[10px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1 shadow-sm">
           ホワイトボードの読み込みに失敗しました (空で開始)
         </div>
       ) : null}
     </div>
+  );
+}
+
+function CardPreview({
+  drag,
+  colorId,
+}: {
+  drag: DragState;
+  colorId: CardColorId;
+}) {
+  const palette = CARD_COLORS.find((c) => c.id === colorId) ?? CARD_COLORS[0];
+  const left = Math.min(drag.startClient.x, drag.endClient.x);
+  const top = Math.min(drag.startClient.y, drag.endClient.y);
+  const width = Math.abs(drag.endClient.x - drag.startClient.x);
+  const height = Math.abs(drag.endClient.y - drag.startClient.y);
+  return (
+    <div
+      style={{
+        position: "fixed",
+        left,
+        top,
+        width,
+        height,
+        backgroundColor: palette.fill,
+        border: `2px dashed ${palette.stroke}`,
+        borderRadius: 6,
+        pointerEvents: "none",
+        opacity: 0.7,
+        zIndex: 70,
+      }}
+    />
   );
 }
