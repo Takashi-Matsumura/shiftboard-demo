@@ -40,7 +40,8 @@ export const GRID = {
   // セル下端からの余白も大きめにしてセル枠線と重ならないようにする。
   dateLabelWidth: 40, // text 領域の幅
   dateLabelHeight: 18,
-  dateLabelInset: 16, // セル右端・下端からの余白
+  dateLabelInsetRight: 24, // セル右端からの余白
+  dateLabelInsetBottom: 8, // セル下端からの余白
 } as const;
 
 type AnyElement = Record<string, unknown>;
@@ -321,7 +322,8 @@ export function buildDateOverlayElements(now: Date = new Date()): readonly unkno
     colWidth,
     dateLabelWidth,
     dateLabelHeight,
-    dateLabelInset,
+    dateLabelInsetRight,
+    dateLabelInsetBottom,
   } = GRID;
 
   const monday = getMondayOfWeek(now);
@@ -338,8 +340,8 @@ export function buildDateOverlayElements(now: Date = new Date()): readonly unkno
         id: `gridmeta:date:${d}`,
         seedSalt: 700 + d,
         kind: GRID_KIND_META,
-        x: cellRight - dateLabelWidth - dateLabelInset,
-        y: cellBottom - dateLabelHeight - dateLabelInset,
+        x: cellRight - dateLabelWidth - dateLabelInsetRight,
+        y: cellBottom - dateLabelHeight - dateLabelInsetBottom,
         w: dateLabelWidth,
         h: dateLabelHeight,
         text: formatMd(date),
