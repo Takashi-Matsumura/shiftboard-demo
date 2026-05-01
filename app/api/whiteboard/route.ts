@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getUser } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
-import { GRID_KIND } from "@/lib/grid";
+import { isGridElement } from "@/lib/grid";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -74,12 +74,10 @@ export async function PUT(request: NextRequest) {
 
   const b = (body ?? {}) as { elements?: unknown; appState?: unknown };
   const elementsRaw = Array.isArray(b.elements) ? b.elements : [];
-  // 多層防御: クライアントが grid 要素を混入させても DB には残さない。
-  const elements = elementsRaw.filter((el: unknown) => {
-    if (!el || typeof el !== "object") return true;
-    const cd = (el as { customData?: { kind?: unknown } }).customData;
-    return !cd || cd.kind !== GRID_KIND;
-  });
+  // 多層防御: クライアントが grid 要素 (frame / meta) を混入させても DB には残さない。
+  const elements = elementsRaw.filter(
+    (el: unknown) => !isGridElement(el as { customData?: unknown }),
+  );
   const appState = sanitizeAppState(b.appState);
 
   const elementsStr = JSON.stringify(elements);

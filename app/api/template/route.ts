@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getUser } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
+import { isGridFrameElement } from "@/lib/grid";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,7 +62,11 @@ export async function PUT(request: NextRequest) {
   }
 
   const b = (body ?? {}) as { elements?: unknown };
-  const elements = Array.isArray(b.elements) ? b.elements : [];
+  const elementsRaw = Array.isArray(b.elements) ? b.elements : [];
+  // 多層防御: テンプレ枠 (frame) のみ保存。動的メタ (meta) や非 grid 要素は除外。
+  const elements = elementsRaw.filter((el: unknown) =>
+    isGridFrameElement(el as { customData?: unknown }),
+  );
   const elementsStr = JSON.stringify(elements);
 
   // ロック保有者のみ保存可。upsert で空行が無い場合も処理。
