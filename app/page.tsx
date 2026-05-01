@@ -237,15 +237,18 @@ export default function Home() {
       />
 
       <footer className="fixed right-0 bottom-0 left-0 z-[60] flex h-9 items-center justify-between gap-3 border-t border-slate-200 bg-white/90 px-3 backdrop-blur-sm">
-        {/* 左/中央: カード操作 (パレットは WhiteboardCanvas から portal で挿入される) */}
-        <div className="flex flex-1 items-center gap-2 overflow-hidden">
-          <span className="font-mono text-[10px] font-medium text-slate-500">
-            カード操作
-          </span>
-          <div
-            id="card-palette-slot"
-            className="flex flex-1 items-center justify-start"
-          />
+        {/* 左: 空 (右のトグルとバランスを取るためのスペーサー) */}
+        <div />
+
+        {/* 中央: カード操作 (パレットは WhiteboardCanvas から portal で挿入される)。
+            header の週ナビと同じ pattern で absolute 中央寄せ。 */}
+        <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 transform">
+          <div className="pointer-events-auto flex items-center gap-2">
+            <span className="font-mono text-[10px] font-medium text-slate-500">
+              カード操作
+            </span>
+            <div id="card-palette-slot" className="flex items-center" />
+          </div>
         </div>
 
         {/* 右: Excalidraw ツール群の表示トグル */}

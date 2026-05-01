@@ -461,6 +461,7 @@ export default function WhiteboardCanvas({
 
   return (
     <div
+      className={showTools ? undefined : "shiftboard-tools-hidden"}
       style={{
         position: "absolute",
         top: topOffset,
