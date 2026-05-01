@@ -16,7 +16,9 @@ export const GRID_KIND = GRID_KIND_FRAME;
 
 export const GRID = {
   origin: { x: 100, y: 100 },
-  headerHeight: 40,
+  // ヘッダ rect は 2 段構成 (上半分 = 日付、下半分 = 曜日)。両段とも同じ高さ・同じフォント。
+  headerHeight: 60,
+  dateBandHeight: 30, // ヘッダの上半分: 日付ラベル
   labelGutter: 60,
   colWidth: 200,
   rowHeight: 40,
@@ -27,19 +29,11 @@ export const GRID = {
   colorMajor: "#94a3b8", // slate-400
   colorMinor: "#e2e8f0", // slate-200
   colorText: "#0f172a", // slate-900
-  colorMutedText: "#475569", // slate-600 (日付・週番号)
   colorHeaderBg: "#f1f5f9", // slate-100
   colorSatBg: "#dbeafe", // blue-100
   colorSunBg: "#fee2e2", // red-100
   fontSize: 14,
-  fontSizeSmall: 11,
-  fontSizeWeek: 18,
   fontFamilyHelvetica: 5, // Excalidraw の FONT_FAMILY.Helvetica
-  // 日付ラベル領域 (曜日ヘッダ rect の上半分に重ねる)
-  dateRowHeight: 16,
-  // 週番号バー (origin.y より上に配置)
-  weekBarHeight: 28,
-  weekBarOffset: 36, // origin.y からの上方向オフセット
 } as const;
 
 type AnyElement = Record<string, unknown>;
@@ -203,7 +197,7 @@ export function buildGridElements(): readonly unknown[] {
     hoursStart,
     hoursEnd,
     daysJa,
-    dateRowHeight,
+    dateBandHeight,
   } = GRID;
 
   const rowsCount = (hoursEnd - hoursStart) * 2; // 30 分行数
@@ -235,9 +229,9 @@ export function buildGridElements(): readonly unknown[] {
         id: `grid:headerLabel:${d}`,
         seedSalt: 200 + d,
         x: origin.x + labelGutter + d * colWidth,
-        y: origin.y + dateRowHeight,
+        y: origin.y + dateBandHeight,
         w: colWidth,
-        h: headerHeight - dateRowHeight,
+        h: headerHeight - dateBandHeight,
         text: daysJa[d],
       }),
     );
@@ -307,34 +301,18 @@ export function buildGridElements(): readonly unknown[] {
   return els;
 }
 
-// 動的メタ情報 (年・週番号・各曜日の日付) を Excalidraw element として生成する。
-// `now` の所属する ISO 8601 週を表示対象とする。これらは customData.kind = GRID_KIND_META で
+// 動的メタ情報 (各曜日の日付ラベル) を Excalidraw element として生成する。
+// `now` の所属する ISO 8601 週を表示対象とする。customData.kind = GRID_KIND_META で
 // マークされ、テンプレとしては保存されず、毎回クライアント側で再生成される。
+//
+// 年・週番号 ("YYYY年 第N週") は Excalidraw 外のヘッダー UI で表示するためここでは出さない。
 export function buildDateOverlayElements(now: Date = new Date()): readonly unknown[] {
   const els: AnyElement[] = [];
-  const { origin, labelGutter, colWidth, dateRowHeight, weekBarHeight, weekBarOffset } = GRID;
+  const { origin, labelGutter, colWidth, dateBandHeight } = GRID;
 
   const monday = getMondayOfWeek(now);
-  const { year, week } = getISOWeek(monday);
 
-  // 1. 週番号バー: 「2026年 第18週」
-  els.push(
-    text({
-      id: `gridmeta:weekLabel`,
-      seedSalt: 600,
-      kind: GRID_KIND_META,
-      x: origin.x + labelGutter,
-      y: origin.y - weekBarOffset,
-      w: colWidth * 7,
-      h: weekBarHeight,
-      text: `${year}年 第${week}週`,
-      align: "center",
-      color: GRID.colorText,
-      fontSize: GRID.fontSizeWeek,
-    }),
-  );
-
-  // 2. 各曜日ヘッダ rect の上半分に日付ラベル「5/4」など
+  // 各曜日ヘッダ rect の上半分に日付ラベル。曜日ラベルと同じスタイル (fontSize / 中央寄せ / 同色) に揃える。
   for (let d = 0; d < 7; d++) {
     const date = new Date(monday);
     date.setDate(monday.getDate() + d);
@@ -346,11 +324,11 @@ export function buildDateOverlayElements(now: Date = new Date()): readonly unkno
         x: origin.x + labelGutter + d * colWidth,
         y: origin.y,
         w: colWidth,
-        h: dateRowHeight,
+        h: dateBandHeight,
         text: formatMd(date),
         align: "center",
-        color: GRID.colorMutedText,
-        fontSize: GRID.fontSizeSmall,
+        color: GRID.colorText,
+        fontSize: GRID.fontSize,
       }),
     );
   }

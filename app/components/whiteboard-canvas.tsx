@@ -21,10 +21,13 @@ export type WhiteboardCanvasMode = "view" | "edit-template";
 
 export default function WhiteboardCanvas({
   mode = "view",
+  weekOffset = 0,
   topOffset = 0,
   onLockLost,
 }: {
   mode?: WhiteboardCanvasMode;
+  // 表示する週を「今週」からの相対オフセット (週単位) で指定。0=今週、-1=先週、+1=来週
+  weekOffset?: number;
   topOffset?: number;
   onLockLost?: () => void;
 }) {
@@ -58,9 +61,11 @@ export default function WhiteboardCanvas({
 
     let cancel = false;
 
-    // 動的メタ (年・週番号・日付ラベル) は表示時点の現在日付で生成して常に inject。
+    // 動的メタ (各曜日の日付ラベル) は weekOffset を加味した日付で生成して常に inject。
     // mode に関係なく locked のまま表示し、保存対象にも含めない。
-    const dateOverlay = buildDateOverlayElements(new Date());
+    const targetDate = new Date();
+    targetDate.setDate(targetDate.getDate() + weekOffset * 7);
+    const dateOverlay = buildDateOverlayElements(targetDate);
 
     async function loadView() {
       // 通常モード: テンプレ + ユーザ書き込みをマージして表示。
@@ -152,7 +157,7 @@ export default function WhiteboardCanvas({
     return () => {
       cancel = true;
     };
-  }, [mode]);
+  }, [mode, weekOffset]);
 
   const flushSave = useCallback(() => {
     const pending = pendingRef.current;
