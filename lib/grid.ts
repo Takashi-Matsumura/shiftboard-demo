@@ -16,9 +16,7 @@ export const GRID_KIND = GRID_KIND_FRAME;
 
 export const GRID = {
   origin: { x: 100, y: 100 },
-  // ヘッダ rect は 2 段構成 (上半分 = 日付、下半分 = 曜日)。両段とも同じ高さ・同じフォント。
-  headerHeight: 60,
-  dateBandHeight: 30, // ヘッダの上半分: 日付ラベル
+  headerHeight: 40,
   labelGutter: 60,
   colWidth: 200,
   rowHeight: 40,
@@ -29,11 +27,17 @@ export const GRID = {
   colorMajor: "#94a3b8", // slate-400
   colorMinor: "#e2e8f0", // slate-200
   colorText: "#0f172a", // slate-900
+  colorMutedText: "#64748b", // slate-500 (日付ラベル)
   colorHeaderBg: "#f1f5f9", // slate-100
   colorSatBg: "#dbeafe", // blue-100
   colorSunBg: "#fee2e2", // red-100
   fontSize: 14,
+  fontSizeSmall: 11,
   fontFamilyHelvetica: 5, // Excalidraw の FONT_FAMILY.Helvetica
+  // 日付ラベルを曜日セルの右下に配置するためのレイアウト指定
+  dateLabelWidth: 36, // text 領域の幅
+  dateLabelHeight: 14,
+  dateLabelInset: 4, // セル右端・下端からの余白
 } as const;
 
 type AnyElement = Record<string, unknown>;
@@ -197,7 +201,6 @@ export function buildGridElements(): readonly unknown[] {
     hoursStart,
     hoursEnd,
     daysJa,
-    dateBandHeight,
   } = GRID;
 
   const rowsCount = (hoursEnd - hoursStart) * 2; // 30 分行数
@@ -222,16 +225,16 @@ export function buildGridElements(): readonly unknown[] {
     );
   }
 
-  // 2. 曜日ヘッダ text 7 個 (rect の下半分に配置、上半分は日付ラベル用に空けておく)
+  // 2. 曜日ヘッダ text 7 個 (rect 全体に中央寄せ)
   for (let d = 0; d < 7; d++) {
     els.push(
       text({
         id: `grid:headerLabel:${d}`,
         seedSalt: 200 + d,
         x: origin.x + labelGutter + d * colWidth,
-        y: origin.y + dateBandHeight,
+        y: origin.y,
         w: colWidth,
-        h: headerHeight - dateBandHeight,
+        h: headerHeight,
         text: daysJa[d],
       }),
     );
@@ -308,27 +311,38 @@ export function buildGridElements(): readonly unknown[] {
 // 年・週番号 ("YYYY年 第N週") は Excalidraw 外のヘッダー UI で表示するためここでは出さない。
 export function buildDateOverlayElements(now: Date = new Date()): readonly unknown[] {
   const els: AnyElement[] = [];
-  const { origin, labelGutter, colWidth, dateBandHeight } = GRID;
+  const {
+    origin,
+    headerHeight,
+    labelGutter,
+    colWidth,
+    dateLabelWidth,
+    dateLabelHeight,
+    dateLabelInset,
+  } = GRID;
 
   const monday = getMondayOfWeek(now);
 
-  // 各曜日ヘッダ rect の上半分に日付ラベル。曜日ラベルと同じスタイル (fontSize / 中央寄せ / 同色) に揃える。
+  // 各曜日ヘッダ rect の右下に日付ラベル「5/4」など。中央の曜日テキストと干渉しないよう
+  // 小さめのフォント・控えめな色で右下に寄せる。
   for (let d = 0; d < 7; d++) {
     const date = new Date(monday);
     date.setDate(monday.getDate() + d);
+    const cellRight = origin.x + labelGutter + (d + 1) * colWidth;
+    const cellBottom = origin.y + headerHeight;
     els.push(
       text({
         id: `gridmeta:date:${d}`,
         seedSalt: 700 + d,
         kind: GRID_KIND_META,
-        x: origin.x + labelGutter + d * colWidth,
-        y: origin.y,
-        w: colWidth,
-        h: dateBandHeight,
+        x: cellRight - dateLabelWidth - dateLabelInset,
+        y: cellBottom - dateLabelHeight - dateLabelInset,
+        w: dateLabelWidth,
+        h: dateLabelHeight,
         text: formatMd(date),
-        align: "center",
-        color: GRID.colorText,
-        fontSize: GRID.fontSize,
+        align: "right",
+        color: GRID.colorMutedText,
+        fontSize: GRID.fontSizeSmall,
       }),
     );
   }
