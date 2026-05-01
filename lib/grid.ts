@@ -381,6 +381,93 @@ export function isGridMetaElement(el: { customData?: unknown } | null | undefine
   return elementKind(el) === GRID_KIND_META;
 }
 
+// === カード ==============================================================
+
+// スケジュール上に配置する「カード」要素。Shift+Alt+ドラッグで作成され、
+// 30 分グリッドにスナップして配置される。ユーザ要素として /api/whiteboard に
+// 永続化される (locked: false で移動・削除可)。
+export const CARD_KIND = "card-v1";
+
+export type CardColorId = "blue" | "green" | "amber" | "rose" | "violet" | "slate";
+
+export const CARD_COLORS: ReadonlyArray<{
+  id: CardColorId;
+  label: string;
+  fill: string;
+  stroke: string;
+}> = [
+  { id: "blue", label: "青", fill: "#dbeafe", stroke: "#2563eb" },
+  { id: "green", label: "緑", fill: "#d1fae5", stroke: "#059669" },
+  { id: "amber", label: "黄", fill: "#fef3c7", stroke: "#d97706" },
+  { id: "rose", label: "桃", fill: "#ffe4e6", stroke: "#e11d48" },
+  { id: "violet", label: "紫", fill: "#ede9fe", stroke: "#7c3aed" },
+  { id: "slate", label: "灰", fill: "#e2e8f0", stroke: "#475569" },
+];
+
+// 30 分グリッドの原点 (左上のセル左上端)
+export function gridOriginXY(): { x: number; y: number } {
+  return {
+    x: GRID.origin.x + GRID.labelGutter,
+    y: GRID.origin.y + GRID.headerHeight,
+  };
+}
+
+// シーン座標を 30 分グリッドにスナップ。原点はグリッドの左上端。
+export function snapToHalfHourGrid(x: number, y: number): { x: number; y: number } {
+  const o = gridOriginXY();
+  const sx = Math.round((x - o.x) / GRID.rowHeight) * GRID.rowHeight + o.x;
+  const sy = Math.round((y - o.y) / GRID.rowHeight) * GRID.rowHeight + o.y;
+  return { x: sx, y: sy };
+}
+
+export function isCardElement(el: { customData?: unknown } | null | undefined): boolean {
+  return elementKind(el) === CARD_KIND;
+}
+
+// ドラッグ完了時に、選択された色とスナップ済み座標からカード element を生成する。
+// 保存は通常のユーザ要素として onChange → /api/whiteboard で行われるので、
+// ここでは特別な処理は要らない。
+export function createCardElement(args: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  colorId: CardColorId;
+}): Record<string, unknown> {
+  const palette = CARD_COLORS.find((c) => c.id === args.colorId) ?? CARD_COLORS[0];
+  const id = `card:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+  return {
+    id,
+    type: "rectangle",
+    x: args.x,
+    y: args.y,
+    width: args.width,
+    height: args.height,
+    angle: 0,
+    strokeColor: palette.stroke,
+    backgroundColor: palette.fill,
+    fillStyle: "solid",
+    strokeWidth: 2,
+    strokeStyle: "solid",
+    roughness: 0,
+    opacity: 100,
+    // 角丸 (Excalidraw v0.18 系: roundness.type=3 で proportional radius)
+    roundness: { type: 3 },
+    seed: Math.floor(Math.random() * 2 ** 31),
+    version: 1,
+    versionNonce: Math.floor(Math.random() * 2 ** 31),
+    isDeleted: false,
+    groupIds: [],
+    frameId: null,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    index: null,
+    customData: { kind: CARD_KIND, color: args.colorId },
+  };
+}
+
 // frame / meta どちらも除外 (ユーザ要素のみ取り出す)
 export function stripGridElements<T extends { customData?: unknown }>(els: readonly T[]): T[] {
   return els.filter((e) => !isGridElement(e));
