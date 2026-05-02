@@ -474,6 +474,44 @@ export function cardBoundsToSchedule(args: {
   return { startAt, endAt };
 }
 
+// `cardBoundsToSchedule` の逆。startAt / endAt からカード矩形 (シーン座標) を導出。
+// グリッドはどの週でも同じ列構造なので weekOffset は不要 (曜日と時刻だけで決まる)。
+// 30 分単位にスナップする (15 分のような端数は最寄りに丸め)。
+// 範囲外 (endAt <= startAt など) のときは null。
+export function scheduleToCardBounds(args: {
+  startAt: Date | string;
+  endAt: Date | string;
+}): { x: number; y: number; width: number; height: number } | null {
+  const startAt =
+    args.startAt instanceof Date ? args.startAt : new Date(args.startAt);
+  const endAt = args.endAt instanceof Date ? args.endAt : new Date(args.endAt);
+  if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) return null;
+
+  const colStart = GRID.origin.x + GRID.labelGutter;
+  const rowStart = GRID.origin.y + GRID.headerHeight;
+
+  // 月曜=0 ... 日曜=6
+  const startDow = (startAt.getDay() + 6) % 7;
+  const endDow = (endAt.getDay() + 6) % 7;
+  const startMin =
+    (startAt.getHours() - GRID.hoursStart) * 2 +
+    Math.round(startAt.getMinutes() / 30);
+  const endMin =
+    (endAt.getHours() - GRID.hoursStart) * 2 +
+    Math.round(endAt.getMinutes() / 30);
+
+  if (startDow < 0 || startDow > 6 || endDow < 0 || endDow > 6) return null;
+  if (endDow < startDow) return null;
+  if (endMin <= startMin) return null;
+
+  return {
+    x: colStart + startDow * GRID.colWidth,
+    y: rowStart + startMin * GRID.rowHeight,
+    width: (endDow - startDow + 1) * GRID.colWidth,
+    height: (endMin - startMin) * GRID.rowHeight,
+  };
+}
+
 // シーン座標を 30 分グリッドにスナップ。原点はグリッドの左上端。
 export function snapToHalfHourGrid(x: number, y: number): { x: number; y: number } {
   const o = gridOriginXY();
@@ -503,13 +541,20 @@ export function surnameInitial(name: string | null | undefined): string {
   return head[0] ?? "";
 }
 
-// カード中央のラベルは「顧客名のみ」を 1 行で表示する。担当者の 1 文字バッジは
+// カード中央のラベルは
+//   1 行目: 顧客名
+//   2 行目: (業務名)
+// の 2 行構成で表示する。どちらか欠けてもよい。担当者の 1 文字バッジは
 // 社員カラーで色付けしたいので Excalidraw 要素ではなく HTML オーバーレイで描画する
 // (Excalidraw 要素にすると groupIds でカードのリサイズが固定されてしまうため)。
 export function formatScheduleLabel(args: {
   toWhom: { name: string } | null;
+  what: { name: string } | null;
 }): string {
-  return args.toWhom?.name ?? "";
+  const lines: string[] = [];
+  if (args.toWhom?.name) lines.push(args.toWhom.name);
+  if (args.what?.name) lines.push(`(${args.what.name})`);
+  return lines.join("\n");
 }
 
 // テキスト幅をフォントから簡易推定 (CJK は full-width, ASCII は約 0.55em)。
@@ -522,7 +567,7 @@ function approxLabelWidth(text: string, fontSize: number): number {
   return w;
 }
 
-// バウンドテキストとしての bbox 計算。
+// バウンドテキストとしての bbox 計算。複数行 (\n 区切り) にも対応。
 // Excalidraw は text の x/y/width/height を実際のレンダリング位置として使うため、
 // 推定したテキスト寸法でカード中央に配置する。Excalidraw のリサイズハンドラが
 // containerId 経由でこの座標を再計算してくれる。
@@ -533,12 +578,18 @@ export function scheduleLabelBounds(args: {
 }): { x: number; y: number; width: number; height: number } {
   const fontSize = args.fontSize ?? 14;
   const lineHeight = fontSize * 1.25;
-  const textW = Math.min(approxLabelWidth(args.text, fontSize), args.card.width);
+  const lines = args.text.length > 0 ? args.text.split("\n") : [""];
+  let maxLineW = 0;
+  for (const line of lines) {
+    maxLineW = Math.max(maxLineW, approxLabelWidth(line, fontSize));
+  }
+  const textW = Math.min(maxLineW, args.card.width);
+  const textH = lineHeight * lines.length;
   return {
     x: args.card.x + (args.card.width - textW) / 2,
-    y: args.card.y + (args.card.height - lineHeight) / 2,
+    y: args.card.y + (args.card.height - textH) / 2,
     width: textW,
-    height: lineHeight,
+    height: textH,
   };
 }
 

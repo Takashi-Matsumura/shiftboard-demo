@@ -16,12 +16,14 @@ import {
   createCardElement,
   createScheduleLabelElement,
   formatScheduleLabel,
+  GRID,
   isCardElement,
   isGridFrameElement,
   SCHEDULE_BADGE_KIND,
   SCHEDULE_BADGE_TEXT_KIND,
   SCHEDULE_LABEL_KIND,
   scheduleLabelBounds,
+  scheduleToCardBounds,
   snapToHalfHourGrid,
   stripGridElements,
   surnameInitial,
@@ -563,11 +565,35 @@ export default function WhiteboardCanvas({
         CARD_COLORS.find((c) => c.id === strokeColorId) ?? CARD_COLORS[5];
       const labelText = formatScheduleLabel({
         toWhom: summary.toWhom ? { name: summary.toWhom.name } : null,
+        what: summary.what ? { name: summary.what.name } : null,
       });
       // 担当者の 1 文字バッジは HTML オーバーレイで描画するため、カードの customData に
       // 苗字 1 文字と社員カラーを保存しておく (リロード後も復元できるように)。
       const whoInitial = summary.who ? surnameInitial(summary.who.name) : null;
       const whoColor: CardColorId | null = summary.who ? summary.who.color : null;
+
+      // モーダルで開始/終了時刻が変わっていれば、Y (開始行) と高さ (= 時間幅) を
+      // 上書きする。横方向 (X / 幅) はユーザが手で設定したサイズを尊重し、
+      // 担当列が変わったときだけ X を新しい列の左端へ揃える (幅はそのまま)。
+      const computedBounds =
+        summary.startAt && summary.endAt
+          ? scheduleToCardBounds({ startAt: summary.startAt, endAt: summary.endAt })
+          : null;
+      let cardX = card.x;
+      let cardY = card.y;
+      const cardW = card.width;
+      let cardH = card.height;
+      if (computedBounds) {
+        cardY = computedBounds.y;
+        cardH = computedBounds.height;
+        const colStart = GRID.origin.x + GRID.labelGutter;
+        const newDow = Math.round((computedBounds.x - colStart) / GRID.colWidth);
+        const oldDow = Math.round((card.x - colStart) / GRID.colWidth);
+        if (newDow !== oldDow) {
+          cardX = computedBounds.x;
+        }
+      }
+      const newCardGeo = { x: cardX, y: cardY, width: cardW, height: cardH };
 
       const customDataOf = (el: Record<string, unknown>) =>
         (el.customData as { kind?: string; cardId?: string } | undefined) ?? {};
@@ -607,12 +633,7 @@ export default function WhiteboardCanvas({
       } else if (!existingLabel) {
         const label = createScheduleLabelElement({
           cardId,
-          card: {
-            x: card.x,
-            y: card.y,
-            width: card.width,
-            height: card.height,
-          },
+          card: newCardGeo,
           text: labelText,
         });
         additions.push(label);
@@ -642,7 +663,7 @@ export default function WhiteboardCanvas({
           const elId = (el as { id?: string }).id;
 
           // カード本体: 塗り=顧客カラー / 枠=担当社員カラー / 角正方形 / 半透明
-          // + boundElements / groupIds 解除 + 担当者バッジ用 customData
+          // + 時刻から逆算した位置とサイズに更新 + 担当者バッジ用 customData
           if (elId === cardId) {
             const prevCustom =
               ((el as Record<string, unknown>).customData as Record<
@@ -651,6 +672,10 @@ export default function WhiteboardCanvas({
               > | undefined) ?? {};
             return bump({
               ...el,
+              x: cardX,
+              y: cardY,
+              width: cardW,
+              height: cardH,
               strokeColor: strokePalette.stroke,
               backgroundColor: fillPalette.fill,
               roundness: null,
@@ -668,19 +693,14 @@ export default function WhiteboardCanvas({
             });
           }
 
-          // 既存ラベル: テキスト + bbox 再計算 + containerId バインド
+          // 既存ラベル: テキスト + 新カード矩形での bbox 再計算 + containerId バインド
           if (
             existingLabel &&
             elId === existingLabel.id &&
             labelText !== ""
           ) {
             const b = scheduleLabelBounds({
-              card: {
-                x: card.x,
-                y: card.y,
-                width: card.width,
-                height: card.height,
-              },
+              card: newCardGeo,
               text: labelText,
             });
             return bump({
