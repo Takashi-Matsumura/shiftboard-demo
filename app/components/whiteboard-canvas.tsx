@@ -13,12 +13,18 @@ import {
   CARD_KIND,
   type CardColorId,
   createCardElement,
+  createScheduleBadgeElements,
   createScheduleLabelElement,
   formatScheduleLabel,
   isCardElement,
   isGridFrameElement,
+  SCHEDULE_BADGE_KIND,
+  SCHEDULE_BADGE_TEXT_KIND,
+  SCHEDULE_LABEL_KIND,
+  scheduleLabelBounds,
   snapToHalfHourGrid,
   stripGridElements,
+  surnameInitial,
 } from "@/lib/grid";
 import { ScheduleModal, type ScheduleLabelSummary } from "./schedule-modal";
 
@@ -104,14 +110,14 @@ export default function WhiteboardCanvas({
   const [excalidrawAPI, setExcalidrawAPI] = useState<ExcalidrawLikeAPI | null>(
     null,
   );
-  const [cardColor, setCardColor] = useState<CardColorId>("blue");
+  // カード新規配置時の色は固定で slate (グレー)。顧客割当て後は handleScheduleSaved で
+  // 顧客カラーに置き換わる。手動の再着色 UI は廃止。
+  const cardColor: CardColorId = "slate";
 
-  // 選択中のカード集合 (id と、全員が同じ色なら uniformColor)。
-  // パレットボタンの押下挙動を「選択あり: 再着色 / 選択なし: デフォルト変更」で切替えるために使う。
+  // 選択中のカード id 集合。「詳細」ボタンの表示条件として使う (1 枚選択時のみ表示)。
   const [cardSelection, setCardSelection] = useState<{
     ids: readonly string[];
-    uniformColor: CardColorId | null;
-  }>({ ids: [], uniformColor: null });
+  }>({ ids: [] });
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
   // 自動保存 (PATCH) 完了直後にカードの右下へ「✓ 自動保存」を一定時間
   // 表示するための state とタイマー管理。
@@ -384,29 +390,17 @@ export default function WhiteboardCanvas({
           : { scrollX, scrollY, zoom: zoomValue },
       );
 
-      // 選択中カードの追跡 (view モードのみ意味を持つが、edit-template でも害は無い)
+      // 選択中カードの追跡 (「詳細」ボタンの表示判定のみ。色は顧客連動なので uniformColor は不要)
       const selectedIds = (appState.selectedElementIds ?? {}) as Record<string, boolean>;
-      const selectedCards = (elements as Array<{
-        id?: string;
-        customData?: { kind?: string; color?: string };
-      }>).filter((el) => el.id && selectedIds[el.id] && isCardElement(el));
-      const ids = selectedCards.map((c) => c.id as string);
-      const colorSet = new Set(
-        selectedCards.map((c) => c.customData?.color).filter(Boolean) as string[],
+      const selectedCards = (elements as Array<{ id?: string; customData?: unknown }>).filter(
+        (el) => el.id && selectedIds[el.id] && isCardElement(el),
       );
-      const uniform: CardColorId | null =
-        colorSet.size === 1
-          ? (Array.from(colorSet)[0] as CardColorId)
-          : null;
+      const ids = selectedCards.map((c) => c.id as string);
       setCardSelection((prev) => {
-        if (
-          prev.ids.length === ids.length &&
-          prev.ids.every((v, i) => v === ids[i]) &&
-          prev.uniformColor === uniform
-        ) {
+        if (prev.ids.length === ids.length && prev.ids.every((v, i) => v === ids[i])) {
           return prev;
         }
-        return { ids, uniformColor: uniform };
+        return { ids };
       });
 
       // 通常モードのみ: カード bounds の変化を検知して dirty キューに積む
@@ -485,53 +479,13 @@ export default function WhiteboardCanvas({
     [scheduleSave, flushTimeSync],
   );
 
-  // パレットボタン押下時のハンドラ。
-  //   - カード選択中 → 選択中カードの色を変更
-  //   - 選択なし     → 新規配置時のデフォルト色を変更
-  const handleColorPick = useCallback(
-    (id: CardColorId) => {
-      if (cardSelection.ids.length > 0 && excalidrawAPI) {
-        const palette = CARD_COLORS.find((c) => c.id === id) ?? CARD_COLORS[0];
-        const idsSet = new Set(cardSelection.ids);
-        const elements = excalidrawAPI.getSceneElements();
-        const updated = (
-          elements as Array<Record<string, unknown> & {
-            id?: string;
-            customData?: unknown;
-          }>
-        ).map((el) => {
-            if (!el.id || !idsSet.has(el.id) || !isCardElement(el)) return el;
-            const prevCustom =
-              (el.customData as Record<string, unknown> | undefined) ?? {};
-            return {
-              ...el,
-              strokeColor: palette.stroke,
-              backgroundColor: palette.fill,
-              customData: { ...prevCustom, kind: CARD_KIND, color: id },
-              version: ((el.version as number | undefined) ?? 0) + 1,
-              versionNonce: Math.floor(Math.random() * 2 ** 31),
-              updated: Date.now(),
-            };
-          },
-        );
-        excalidrawAPI.updateScene({ elements: updated });
-        // 全選択中カードが同じ色になるので uniformColor も追従させる
-        setCardSelection((prev) => ({ ...prev, uniformColor: id }));
-        return;
-      }
-      // 選択なし: 次に配置するカードのデフォルト色を変更
-      setCardColor(id);
-    },
-    [cardSelection.ids, excalidrawAPI],
-  );
-
-  // ScheduleModal で保存されたとき、対応するカードに「誰が／誰に」を
-  // bound text としてつける。既存のラベルがあればテキストを更新、空に
-  // なれば削除。Excalidraw の containerId 経由でカード中央に配置される。
+  // ScheduleModal で保存されたとき、カードを「顧客カラー化 + 顧客名ラベル + 担当者バッジ」に同期する。
+  //   - rectangle: 塗り/枠 = toWhom.color (なければ slate)、customData.color も追随
+  //   - schedule-label-v1 text: 顧客名のみ (containerId 経由でカード中央に配置)
+  //   - schedule-badge-v1 ellipse + schedule-badge-text-v1 text: 担当者の苗字 1 文字
   const handleScheduleSaved = useCallback(
     (cardId: string, summary: ScheduleLabelSummary) => {
       if (!excalidrawAPI) return;
-      const text = formatScheduleLabel(summary);
       const elements = excalidrawAPI.getSceneElements() as readonly Record<
         string,
         unknown
@@ -545,48 +499,48 @@ export default function WhiteboardCanvas({
             height: number;
             boundElements?: { type: string; id: string }[] | null;
             version?: number;
+            groupIds?: string[];
           })
         | undefined;
       if (!card) return;
-      const bounds = card.boundElements ?? [];
-      const existingLabel = elements.find(
-        (el) =>
-          (el.customData as { kind?: string } | undefined)?.kind ===
-            "schedule-label-v1" &&
-          (el.customData as { cardId?: string } | undefined)?.cardId === cardId,
-      ) as (Record<string, unknown> & { id: string; version?: number }) | undefined;
 
-      let next: Record<string, unknown>[];
-      if (existingLabel) {
-        if (text === "") {
-          next = elements
-            .filter((el) => el.id !== existingLabel.id)
-            .map((el) =>
-              el.id === cardId
-                ? {
-                    ...el,
-                    boundElements: bounds.filter((b) => b.id !== existingLabel.id),
-                    version: ((el.version as number | undefined) ?? 0) + 1,
-                    versionNonce: Math.floor(Math.random() * 2 ** 31),
-                    updated: Date.now(),
-                  }
-                : el,
-            );
-        } else {
-          next = elements.map((el) =>
-            el.id === existingLabel.id
-              ? {
-                  ...el,
-                  text,
-                  originalText: text,
-                  version: ((el.version as number | undefined) ?? 0) + 1,
-                  versionNonce: Math.floor(Math.random() * 2 ** 31),
-                  updated: Date.now(),
-                }
-              : el,
-          );
-        }
-      } else if (text !== "") {
+      const desiredColor: CardColorId = summary.toWhom?.color ?? "slate";
+      const cardPalette =
+        CARD_COLORS.find((c) => c.id === desiredColor) ?? CARD_COLORS[5];
+      const labelText = formatScheduleLabel({ toWhom: summary.toWhom?.name ?? null });
+      const badgeChar = summary.who ? surnameInitial(summary.who.name) : "";
+
+      const customDataOf = (el: Record<string, unknown>) =>
+        (el.customData as { kind?: string; cardId?: string } | undefined) ?? {};
+      const matchesCard = (el: Record<string, unknown>, kind: string) => {
+        const cd = customDataOf(el);
+        return cd.kind === kind && cd.cardId === cardId;
+      };
+
+      const existingLabel = elements.find((el) =>
+        matchesCard(el, SCHEDULE_LABEL_KIND),
+      ) as (Record<string, unknown> & { id: string }) | undefined;
+      const existingBadgeEllipse = elements.find((el) =>
+        matchesCard(el, SCHEDULE_BADGE_KIND),
+      ) as (Record<string, unknown> & { id: string }) | undefined;
+      const existingBadgeText = elements.find((el) =>
+        matchesCard(el, SCHEDULE_BADGE_TEXT_KIND),
+      ) as (Record<string, unknown> & { id: string }) | undefined;
+
+      const removeIds = new Set<string>();
+      const additions: Record<string, unknown>[] = [];
+
+      const bump = (el: Record<string, unknown>): Record<string, unknown> => ({
+        ...el,
+        version: ((el.version as number | undefined) ?? 0) + 1,
+        versionNonce: Math.floor(Math.random() * 2 ** 31),
+        updated: Date.now(),
+      });
+
+      // === 顧客名ラベル ===
+      if (labelText === "") {
+        if (existingLabel) removeIds.add(existingLabel.id);
+      } else if (!existingLabel) {
         const label = createScheduleLabelElement({
           cardId,
           card: {
@@ -595,28 +549,168 @@ export default function WhiteboardCanvas({
             width: card.width,
             height: card.height,
           },
-          text,
+          text: labelText,
         });
-        const labelId = label.id as string;
-        next = [
-          ...elements.map((el) =>
-            el.id === cardId
-              ? {
-                  ...el,
-                  boundElements: [...bounds, { type: "text", id: labelId }],
-                  version: ((el.version as number | undefined) ?? 0) + 1,
-                  versionNonce: Math.floor(Math.random() * 2 ** 31),
-                  updated: Date.now(),
-                }
-              : el,
-          ),
-          label,
-        ];
-      } else {
-        return;
+        additions.push(label);
       }
+      // 既存ラベルの文字更新は下の map で処理
 
-      excalidrawAPI.updateScene({ elements: next as never });
+      // === 担当者バッジ ===
+      const hasBoth = Boolean(existingBadgeEllipse && existingBadgeText);
+      const wantsBadge = Boolean(summary.who);
+      let recreateBadge = false;
+      if (!wantsBadge) {
+        if (existingBadgeEllipse) removeIds.add(existingBadgeEllipse.id);
+        if (existingBadgeText) removeIds.add(existingBadgeText.id);
+      } else if (!hasBoth) {
+        // 片方欠損または未生成 → 両方作り直し
+        if (existingBadgeEllipse) removeIds.add(existingBadgeEllipse.id);
+        if (existingBadgeText) removeIds.add(existingBadgeText.id);
+        recreateBadge = true;
+      }
+      if (recreateBadge && summary.who) {
+        const { ellipse, text } = createScheduleBadgeElements({
+          cardId,
+          card: { x: card.x, y: card.y },
+          color: summary.who.color,
+          char: badgeChar,
+        });
+        additions.push(ellipse, text);
+      }
+      // 既存バッジの色/文字更新は下の map で処理
+
+      // === card.boundElements / groupIds の再計算 ===
+      // ラベル / バッジは containerId を使わず groupIds で連動させるため、
+      // boundElements からは削除する (旧データの掃除も兼ねる)。
+      const nextBoundElements = (card.boundElements ?? []).filter(
+        (b) => !removeIds.has(b.id) && b.id !== existingLabel?.id,
+      );
+      const wantsGroup = wantsBadge || labelText !== "";
+      const nextGroupIds = (() => {
+        const prev = (card.groupIds ?? []).filter((g) => g !== cardId);
+        return wantsGroup ? [...prev, cardId] : prev;
+      })();
+
+      const next = elements
+        .filter((el) => !removeIds.has(((el as { id?: string }).id ?? "")))
+        .map((el) => {
+          const elId = (el as { id?: string }).id;
+
+          // カード本体: 色 + boundElements + groupIds + 角を正方形化
+          if (elId === cardId) {
+            const prevCustom =
+              ((el as Record<string, unknown>).customData as Record<
+                string,
+                unknown
+              > | undefined) ?? {};
+            return bump({
+              ...el,
+              strokeColor: cardPalette.stroke,
+              backgroundColor: cardPalette.fill,
+              roundness: null,
+              customData: { ...prevCustom, kind: CARD_KIND, color: desiredColor },
+              boundElements:
+                nextBoundElements.length > 0 ? nextBoundElements : null,
+              groupIds: nextGroupIds,
+            });
+          }
+
+          // 既存ラベル: テキスト更新 + bbox 再計算でカード中央へ + containerId 解除
+          if (
+            existingLabel &&
+            elId === existingLabel.id &&
+            labelText !== ""
+          ) {
+            const b = scheduleLabelBounds({
+              x: card.x,
+              y: card.y,
+              width: card.width,
+              height: card.height,
+            });
+            return bump({
+              ...(el as Record<string, unknown>),
+              text: labelText,
+              originalText: labelText,
+              x: b.x,
+              y: b.y,
+              width: b.width,
+              height: b.height,
+              containerId: null,
+              autoResize: false,
+              groupIds: [cardId],
+              textAlign: "center",
+              verticalAlign: "middle",
+            });
+          }
+
+          // 既存バッジ ellipse: 色更新
+          if (
+            wantsBadge &&
+            hasBoth &&
+            existingBadgeEllipse &&
+            elId === existingBadgeEllipse.id &&
+            summary.who
+          ) {
+            const prevCustom =
+              ((el as Record<string, unknown>).customData as Record<
+                string,
+                unknown
+              > | undefined) ?? {};
+            const p =
+              CARD_COLORS.find((c) => c.id === summary.who!.color) ??
+              CARD_COLORS[5];
+            return bump({
+              ...(el as Record<string, unknown>),
+              strokeColor: p.stroke,
+              backgroundColor: p.fill,
+              customData: {
+                ...prevCustom,
+                kind: SCHEDULE_BADGE_KIND,
+                cardId,
+                color: summary.who.color,
+              },
+            });
+          }
+
+          // 既存バッジ text: 1 文字更新 + ellipse 中央へ手動配置
+          if (
+            wantsBadge &&
+            hasBoth &&
+            existingBadgeText &&
+            existingBadgeEllipse &&
+            elId === existingBadgeText.id
+          ) {
+            const ex =
+              (existingBadgeEllipse.x as number | undefined) ?? card.x;
+            const ey =
+              (existingBadgeEllipse.y as number | undefined) ?? card.y;
+            const ew =
+              (existingBadgeEllipse.width as number | undefined) ?? 24;
+            const eh =
+              (existingBadgeEllipse.height as number | undefined) ?? 24;
+            const cLine = 14 * 1.25;
+            return bump({
+              ...(el as Record<string, unknown>),
+              text: badgeChar,
+              originalText: badgeChar,
+              x: ex,
+              y: ey + (eh - cLine) / 2,
+              width: ew,
+              height: cLine,
+              containerId: null,
+              autoResize: false,
+              groupIds: [cardId],
+              textAlign: "center",
+              verticalAlign: "middle",
+            });
+          }
+
+          return el;
+        });
+
+      excalidrawAPI.updateScene({
+        elements: [...next, ...additions] as never,
+      });
     },
     [excalidrawAPI],
   );
@@ -802,19 +896,11 @@ export default function WhiteboardCanvas({
         </div>
       ) : null}
 
-      {/* カラーパレット (view モードのみ)。
-          - 選択中のカードがあれば「再着色」モード: クリックで選択カードの色を変更
-          - 選択なしなら「デフォルト変更」モード: 次に配置するカードの色を変更
+      {/* カード操作ヒント (view モードのみ)。
+          色は顧客カラーで自動決定するためパレットは廃止し、配置方法だけ案内する。
           page.tsx のフッタースロット (#card-palette-slot) に portal で挿入する。 */}
       {cardModeAvailable && paletteSlot
-        ? createPortal(
-            <CardPalette
-              cardColor={cardColor}
-              cardSelection={cardSelection}
-              onPick={handleColorPick}
-            />,
-            paletteSlot,
-          )
+        ? createPortal(<CardPlacementHint />, paletteSlot)
         : null}
 
       {cardModeAvailable && paletteSlot && cardSelection.ids.length === 1
@@ -847,56 +933,19 @@ export default function WhiteboardCanvas({
   );
 }
 
-function CardPalette({
-  cardColor,
-  cardSelection,
-  onPick,
-}: {
-  cardColor: CardColorId;
-  cardSelection: { ids: readonly string[]; uniformColor: CardColorId | null };
-  onPick: (id: CardColorId) => void;
-}) {
-  const recoloring = cardSelection.ids.length > 0;
-  const highlightId = recoloring ? cardSelection.uniformColor : cardColor;
+function CardPlacementHint() {
   return (
     <div className="flex items-center gap-1.5">
-      <span
-        className={`text-[10px] font-medium ${
-          recoloring ? "text-amber-700" : "text-slate-500"
-        }`}
-      >
-        {recoloring
-          ? `選択中 ${cardSelection.ids.length} 枚 の色変更`
-          : "色"}
+      <span className="text-[10px] text-slate-500">
+        <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
+          ⇧
+        </kbd>
+        +
+        <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
+          ⌥
+        </kbd>
+        + ドラッグで配置
       </span>
-      {CARD_COLORS.map((c) => {
-        const selected = highlightId === c.id;
-        return (
-          <button
-            key={c.id}
-            type="button"
-            onClick={() => onPick(c.id)}
-            className={`inline-flex h-5 w-5 items-center justify-center rounded border-2 transition ${
-              selected ? "ring-2 ring-slate-700 ring-offset-1" : "hover:scale-110"
-            }`}
-            style={{ backgroundColor: c.fill, borderColor: c.stroke }}
-            title={c.label}
-            aria-label={`カード色: ${c.label}`}
-          />
-        );
-      })}
-      {recoloring ? null : (
-        <span className="ml-1 text-[10px] text-slate-500">
-          <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
-            ⇧
-          </kbd>
-          +
-          <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
-            ⌥
-          </kbd>
-          + ドラッグで配置
-        </span>
-      )}
     </div>
   );
 }

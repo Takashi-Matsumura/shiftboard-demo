@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Loader2 } from "lucide-react";
+import type { CardColorId } from "@/lib/grid";
 
-type Option = { id: string; name: string };
+type Option = { id: string; name: string; color: CardColorId };
 type Entry = {
   whoId: string | null;
   whatId: string | null;
@@ -43,8 +44,8 @@ function fromDatetimeLocal(local: string): string | null {
 }
 
 export type ScheduleLabelSummary = {
-  who: string | null;
-  toWhom: string | null;
+  who: { name: string; color: CardColorId } | null;
+  toWhom: { name: string; color: CardColorId } | null;
 };
 
 type Props = {
@@ -155,9 +156,12 @@ export function ScheduleModal({ cardId, onClose, onSaved }: Props) {
         setError(body.error ?? `保存に失敗しました (${res.status})`);
         return;
       }
-      const who = employees.find((o) => o.id === entry.whoId)?.name ?? null;
-      const toWhom = customers.find((o) => o.id === entry.toWhomId)?.name ?? null;
-      onSaved?.(cardId, { who, toWhom });
+      const whoOpt = employees.find((o) => o.id === entry.whoId) ?? null;
+      const toWhomOpt = customers.find((o) => o.id === entry.toWhomId) ?? null;
+      onSaved?.(cardId, {
+        who: whoOpt ? { name: whoOpt.name, color: whoOpt.color } : null,
+        toWhom: toWhomOpt ? { name: toWhomOpt.name, color: toWhomOpt.color } : null,
+      });
       onClose();
     } catch (err) {
       setError((err as Error).message ?? "ネットワークエラー");
