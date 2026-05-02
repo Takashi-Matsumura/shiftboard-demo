@@ -8,6 +8,7 @@ import { Pencil } from "lucide-react";
 import {
   buildDateOverlayElements,
   buildGridElements,
+  cardBoundsToSchedule,
   CARD_COLORS,
   CARD_KIND,
   type CardColorId,
@@ -22,6 +23,10 @@ import {
 import { ScheduleModal, type ScheduleLabelSummary } from "./schedule-modal";
 
 const SAVE_DEBOUNCE_MS = 1500;
+// カード移動・リサイズの「操作完了」を判定するためのアイドル時間
+const TIME_SYNC_DEBOUNCE_MS = 800;
+// 自動保存通知 (✓ バッジ) をカード上に残しておく時間
+const SAVED_INDICATOR_MS = 1800;
 // 30 分グリッド最小サイズ未満のドラッグはクリック扱いで破棄
 const MIN_CARD_SIZE = 16;
 
@@ -80,6 +85,18 @@ export default function WhiteboardCanvas({
     appState: Record<string, unknown>;
   } | null>(null);
 
+  // カードごとの bounds (シーン座標) を保持し、変化があった card id を
+  // dirty キューに溜めて debounce で /api/schedule/[cardId] へ PATCH する。
+  // 移動 / リサイズ操作の完了を「最後の onChange から TIME_SYNC_DEBOUNCE_MS」で判定する。
+  const cardBoundsRef = useRef<
+    Map<string, { x: number; y: number; w: number; h: number }>
+  >(new Map());
+  const dirtyCardIdsRef = useRef<Set<string>>(new Set());
+  const timeSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const boundsInitializedRef = useRef(false);
+  const weekOffsetRef = useRef(weekOffset);
+  weekOffsetRef.current = weekOffset;
+
   // mode 切替時には Excalidraw を完全に再マウントしたいので、key として state に乗せる
   const [mountKey, setMountKey] = useState(0);
 
@@ -96,6 +113,22 @@ export default function WhiteboardCanvas({
     uniformColor: CardColorId | null;
   }>({ ids: [], uniformColor: null });
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  // 自動保存 (PATCH) 完了直後にカードの右下へ「✓ 自動保存」を一定時間
+  // 表示するための state とタイマー管理。
+  const [savedCards, setSavedCards] = useState<
+    ReadonlyArray<{
+      id: string;
+      bounds: { x: number; y: number; w: number; h: number };
+    }>
+  >([]);
+  const savedTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+  const [viewport, setViewport] = useState<{
+    scrollX: number;
+    scrollY: number;
+    zoom: number;
+  }>({ scrollX: 0, scrollY: 0, zoom: 1 });
 
   const [shiftAlt, setShiftAlt] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -267,12 +300,89 @@ export default function WhiteboardCanvas({
     [flushSave],
   );
 
+  // カード bounds が動いたカードについて、現在表示中の週を基準に
+  // startAt / endAt を計算し /api/schedule/[cardId] へ PATCH する。
+  const flushTimeSync = useCallback(async () => {
+    timeSyncTimerRef.current = null;
+    const ids = Array.from(dirtyCardIdsRef.current);
+    dirtyCardIdsRef.current.clear();
+    if (ids.length === 0) return;
+
+    await Promise.all(
+      ids.map(async (id) => {
+        const bounds = cardBoundsRef.current.get(id);
+        if (!bounds) return;
+        const result = cardBoundsToSchedule({
+          card: {
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.w,
+            height: bounds.h,
+          },
+          weekOffset: weekOffsetRef.current,
+        });
+        if (!result) return;
+        try {
+          const res = await fetch(`/api/schedule/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              startAt: result.startAt.toISOString(),
+              endAt: result.endAt.toISOString(),
+            }),
+          });
+          if (!res.ok) return;
+          // 保存完了をカード上に一定時間表示
+          const latest = cardBoundsRef.current.get(id);
+          if (!latest) return;
+          setSavedCards((prev) => {
+            const merged = new Map(prev.map((c) => [c.id, c]));
+            merged.set(id, { id, bounds: { ...latest } });
+            return Array.from(merged.values());
+          });
+          const existing = savedTimersRef.current.get(id);
+          if (existing) clearTimeout(existing);
+          const timer = setTimeout(() => {
+            setSavedCards((prev) => prev.filter((c) => c.id !== id));
+            savedTimersRef.current.delete(id);
+          }, SAVED_INDICATOR_MS);
+          savedTimersRef.current.set(id, timer);
+        } catch {
+          // 失敗は次回の操作完了で再試行される
+        }
+      }),
+    );
+  }, []);
+
+  // unmount 時に表示用タイマーをクリーンアップ
+  useEffect(() => {
+    const timers = savedTimersRef.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+
   const handleChange = useCallback(
     (
       elements: readonly unknown[],
       appState: Record<string, unknown>,
     ) => {
       const currentMode = modeRef.current;
+
+      // ビューポート (スクロール / ズーム) を ref と state に同期。スピナーの位置決めに使う。
+      const rawZoom = appState.zoom as { value?: number } | number | undefined;
+      const zoomValue =
+        typeof rawZoom === "number"
+          ? rawZoom
+          : (rawZoom?.value ?? 1);
+      const scrollX = (appState.scrollX as number | undefined) ?? 0;
+      const scrollY = (appState.scrollY as number | undefined) ?? 0;
+      setViewport((prev) =>
+        prev.scrollX === scrollX && prev.scrollY === scrollY && prev.zoom === zoomValue
+          ? prev
+          : { scrollX, scrollY, zoom: zoomValue },
+      );
 
       // 選択中カードの追跡 (view モードのみ意味を持つが、edit-template でも害は無い)
       const selectedIds = (appState.selectedElementIds ?? {}) as Record<string, boolean>;
@@ -299,6 +409,55 @@ export default function WhiteboardCanvas({
         return { ids, uniformColor: uniform };
       });
 
+      // 通常モードのみ: カード bounds の変化を検知して dirty キューに積む
+      if (currentMode !== "edit-template") {
+        const cards = (elements as Array<{
+          id?: string;
+          x?: number;
+          y?: number;
+          width?: number;
+          height?: number;
+          customData?: unknown;
+        }>).filter((el) => el.id && isCardElement(el));
+        const seen = new Set<string>();
+        const newDirty: string[] = [];
+        for (const card of cards) {
+          const id = card.id as string;
+          seen.add(id);
+          const bounds = {
+            x: card.x ?? 0,
+            y: card.y ?? 0,
+            w: card.width ?? 0,
+            h: card.height ?? 0,
+          };
+          const prev = cardBoundsRef.current.get(id);
+          if (
+            boundsInitializedRef.current &&
+            (!prev ||
+              prev.x !== bounds.x ||
+              prev.y !== bounds.y ||
+              prev.w !== bounds.w ||
+              prev.h !== bounds.h)
+          ) {
+            newDirty.push(id);
+          }
+          cardBoundsRef.current.set(id, bounds);
+        }
+        for (const id of Array.from(cardBoundsRef.current.keys())) {
+          if (!seen.has(id)) cardBoundsRef.current.delete(id);
+        }
+        boundsInitializedRef.current = true;
+
+        if (newDirty.length > 0) {
+          for (const id of newDirty) dirtyCardIdsRef.current.add(id);
+          if (timeSyncTimerRef.current) clearTimeout(timeSyncTimerRef.current);
+          timeSyncTimerRef.current = setTimeout(
+            flushTimeSync,
+            TIME_SYNC_DEBOUNCE_MS,
+          );
+        }
+      }
+
       if (currentMode === "edit-template") {
         // テンプレ枠 (frame) のみ保存対象。動的メタ (meta) は除外。
         const tplOnly = (elements as Array<{ customData?: unknown }>).filter((el) =>
@@ -323,7 +482,7 @@ export default function WhiteboardCanvas({
       };
       scheduleSave(userOnly, savedAppState);
     },
-    [scheduleSave],
+    [scheduleSave, flushTimeSync],
   );
 
   // パレットボタン押下時のハンドラ。
@@ -614,6 +773,34 @@ export default function WhiteboardCanvas({
 
       {/* ドラッグ中のプレビュー (viewport coords / fixed) */}
       {drag ? <CardPreview drag={drag} colorId={cardColor} /> : null}
+
+      {/* 時刻同期 (PATCH) 中のカード上に表示するスピナー。
+          シーン座標 → Excalidraw 表示エリア内のローカル座標へ変換。 */}
+      {savedCards.length > 0 ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{ zIndex: 60 }}
+        >
+          {savedCards.map(({ id, bounds }) => {
+            const left = (bounds.x + viewport.scrollX) * viewport.zoom;
+            const top = (bounds.y + viewport.scrollY) * viewport.zoom;
+            const width = bounds.w * viewport.zoom;
+            const height = bounds.h * viewport.zoom;
+            return (
+              <div
+                key={id}
+                className="absolute flex items-end justify-center p-1"
+                style={{ left, top, width, height }}
+              >
+                <span className="inline-flex items-center rounded-full bg-neutral-900/90 px-2 py-0.5 text-[10px] font-medium text-white shadow">
+                  saving...
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
 
       {/* カラーパレット (view モードのみ)。
           - 選択中のカードがあれば「再着色」モード: クリックで選択カードの色を変更

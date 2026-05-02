@@ -99,3 +99,37 @@ export async function PUT(
 
   return NextResponse.json({ entry });
 }
+
+// カードの座標から導出した startAt / endAt のみを書き戻す部分更新。
+// 他フィールド (whoId / whatId / toWhomId / notes) は保持する。
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ cardId: string }> },
+) {
+  const user = await getUser(request);
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const { cardId } = await params;
+  if (!CARD_ID_RE.test(cardId)) {
+    return NextResponse.json({ error: "invalid cardId" }, { status: 400 });
+  }
+
+  let body: EntryBody;
+  try {
+    body = (await request.json()) as EntryBody;
+  } catch {
+    return NextResponse.json({ error: "invalid JSON" }, { status: 400 });
+  }
+
+  const startAt = pickDate(body.startAt);
+  const endAt = pickDate(body.endAt);
+
+  const entry = await prisma.scheduleEntry.upsert({
+    where: { cardId },
+    update: { startAt, endAt },
+    create: { cardId, startAt, endAt },
+    select: ENTRY_SELECT,
+  });
+
+  return NextResponse.json({ entry });
+}
