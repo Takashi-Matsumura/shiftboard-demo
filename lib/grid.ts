@@ -31,7 +31,7 @@ export const GRID = {
   colorHeaderBg: "#f1f5f9", // slate-100
   colorSatBg: "#dbeafe", // blue-100
   colorSunBg: "#fee2e2", // red-100
-  colorTodayBg: "#93c5fd", // blue-300 (本日の曜日セル)
+  colorTodayText: "#b45309", // amber-700 (本日の日付ラベル)
   fontSize: 14,
   fontSizeSmall: 11,
   fontFamilyHelvetica: 5, // Excalidraw の FONT_FAMILY.Helvetica
@@ -80,7 +80,6 @@ function rectangle(args: {
   bg: string;
   stroke: string;
   strokeWidth?: number;
-  opacity?: number;
 }): AnyElement {
   return {
     ...commonBase(args.id, args.seedSalt, args.kind ?? GRID_KIND_FRAME),
@@ -94,7 +93,6 @@ function rectangle(args: {
     fillStyle: "solid",
     strokeWidth: args.strokeWidth ?? 1,
     strokeStyle: "solid",
-    ...(args.opacity !== undefined ? { opacity: args.opacity } : {}),
   };
 }
 
@@ -331,9 +329,8 @@ export function buildDateOverlayElements(now: Date = new Date()): readonly unkno
 
   const monday = getMondayOfWeek(now);
 
-  // 表示中の週に「本日」が含まれていれば、その曜日セルをハイライトする。
-  // 透過させて下のヘッダーセル (土=blue-100 / 日=red-100 / 平日=slate-100) と
-  // 曜日テキスト (月/火/水/...) を透けさせる。
+  // 表示中の週に「本日」が含まれているか判定。含まれていれば diffDays が
+  // その曜日インデックス (月=0..日=6) になり、日付ラベルを強調表示する。
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const mondayMidnight = new Date(monday);
@@ -341,29 +338,17 @@ export function buildDateOverlayElements(now: Date = new Date()): readonly unkno
   const diffDays = Math.round(
     (today.getTime() - mondayMidnight.getTime()) / (24 * 60 * 60 * 1000),
   );
-  if (diffDays >= 0 && diffDays < 7) {
-    els.push(
-      rectangle({
-        id: "gridmeta:todayCell",
-        seedSalt: 800,
-        kind: GRID_KIND_META,
-        x: origin.x + labelGutter + diffDays * colWidth,
-        y: origin.y,
-        w: colWidth,
-        h: headerHeight,
-        bg: GRID.colorTodayBg,
-        stroke: GRID.colorMajor,
-        strokeWidth: 1.5,
-        opacity: 55,
-      }),
-    );
-  }
+  const todayDow = diffDays >= 0 && diffDays < 7 ? diffDays : -1;
 
   // 各曜日ヘッダ rect の右下に日付ラベル「5/4」など。中央の曜日テキストと干渉しないよう
-  // 小さめのフォント・控えめな色で右下に寄せる。
+  // 小さめのフォント・控えめな色で右下に寄せる。本日だけは大きく濃い色で目立たせる。
   for (let d = 0; d < 7; d++) {
     const date = new Date(monday);
     date.setDate(monday.getDate() + d);
+    const isToday = d === todayDow;
+    const fontSize = isToday ? GRID.fontSize : GRID.fontSizeSmall;
+    const labelW = isToday ? dateLabelWidth + 16 : dateLabelWidth;
+    const labelH = isToday ? dateLabelHeight + 6 : dateLabelHeight;
     const cellRight = origin.x + labelGutter + (d + 1) * colWidth;
     const cellBottom = origin.y + headerHeight;
     els.push(
@@ -371,14 +356,14 @@ export function buildDateOverlayElements(now: Date = new Date()): readonly unkno
         id: `gridmeta:date:${d}`,
         seedSalt: 700 + d,
         kind: GRID_KIND_META,
-        x: cellRight - dateLabelWidth - dateLabelInsetRight,
-        y: cellBottom - dateLabelHeight - dateLabelInsetBottom,
-        w: dateLabelWidth,
-        h: dateLabelHeight,
+        x: cellRight - labelW - dateLabelInsetRight,
+        y: cellBottom - labelH - dateLabelInsetBottom,
+        w: labelW,
+        h: labelH,
         text: formatMd(date),
         align: "right",
-        color: GRID.colorMutedText,
-        fontSize: GRID.fontSizeSmall,
+        color: isToday ? GRID.colorTodayText : GRID.colorMutedText,
+        fontSize,
       }),
     );
   }
