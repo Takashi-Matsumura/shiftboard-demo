@@ -7,6 +7,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CalendarDays,
+  Database,
   Loader2,
   LayoutGrid,
   Save,
@@ -15,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { AccountBadge } from "./components/account-badge";
+import { DataPanel } from "./components/data-panel";
 import { SettingsPanel } from "./components/settings-panel";
 import { getISOWeek, getMondayOfWeek } from "@/lib/grid";
 
@@ -39,6 +41,7 @@ export default function Home() {
   // ON にすると Excalidraw 標準の zen mode を解除し、シェイプツールやメニューが出る。
   const [showTools, setShowTools] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [dataOpen, setDataOpen] = useState(false);
 
   const weekLabel = useMemo(() => {
     const target = new Date();
@@ -144,6 +147,36 @@ export default function Home() {
           <span className="font-mono text-xs font-medium text-slate-700">
             shiftboard-demo
           </span>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setDataOpen((v) => !v)}
+              className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
+                dataOpen
+                  ? "border-slate-700 bg-slate-700 text-white hover:bg-slate-800"
+                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+              }`}
+              title="データパネルを開閉する"
+              aria-pressed={dataOpen}
+            >
+              <Database className="h-3 w-3" />
+              <span>データ</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSettingsOpen((v) => !v)}
+              className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
+                settingsOpen
+                  ? "border-slate-700 bg-slate-700 text-white hover:bg-slate-800"
+                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+              }`}
+              title="設定パネルを開閉する"
+              aria-pressed={settingsOpen}
+            >
+              <Settings className="h-3 w-3" />
+              <span>設定</span>
+            </button>
+          </div>
           {isEditing ? (
             <span className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
               テンプレ編集モード
@@ -187,20 +220,6 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setSettingsOpen((v) => !v)}
-            className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
-              settingsOpen
-                ? "border-slate-700 bg-slate-700 text-white hover:bg-slate-800"
-                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-            }`}
-            title="設定パネルを開閉する"
-            aria-pressed={settingsOpen}
-          >
-            <Settings className="h-3 w-3" />
-            <span>設定</span>
-          </button>
           <AccountBadge />
         </div>
       </header>
@@ -285,6 +304,8 @@ export default function Home() {
           <span>ツール {showTools ? "ON" : "OFF"}</span>
         </button>
       </footer>
+
+      <DataPanel open={dataOpen} onClose={() => setDataOpen(false)} />
 
       <SettingsPanel
         open={settingsOpen}
