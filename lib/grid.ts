@@ -346,9 +346,9 @@ export function buildDateOverlayElements(now: Date = new Date()): readonly unkno
     const date = new Date(monday);
     date.setDate(monday.getDate() + d);
     const isToday = d === todayDow;
-    const fontSize = isToday ? GRID.fontSize : GRID.fontSizeSmall;
-    const labelW = isToday ? dateLabelWidth + 16 : dateLabelWidth;
-    const labelH = isToday ? dateLabelHeight + 6 : dateLabelHeight;
+    const fontSize = isToday ? 18 : GRID.fontSizeSmall;
+    const labelW = isToday ? dateLabelWidth + 24 : dateLabelWidth;
+    const labelH = isToday ? dateLabelHeight + 10 : dateLabelHeight;
     const cellRight = origin.x + labelGutter + (d + 1) * colWidth;
     const cellBottom = origin.y + headerHeight;
     els.push(
