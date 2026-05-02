@@ -412,6 +412,10 @@ export function isCardColorId(value: unknown): value is CardColorId {
   return typeof value === "string" && CARD_COLOR_IDS.includes(value as CardColorId);
 }
 
+// 重なるスケジュールでも背面が透けて見えるように、カード本体は半透明で描画する。
+// バッジ / 顧客名テキストは前面要素として 100 のまま読みやすく保つ。
+export const CARD_OPACITY = 60;
+
 // 30 分グリッドの原点 (左上のセル左上端)
 export function gridOriginXY(): { x: number; y: number } {
   return {
@@ -695,7 +699,7 @@ export function createCardElement(args: {
     strokeWidth: 2,
     strokeStyle: "solid",
     roughness: 0,
-    opacity: 100,
+    opacity: CARD_OPACITY,
     // 四隅は正方形にする (角丸なし)
     roundness: null,
     seed: Math.floor(Math.random() * 2 ** 31),
