@@ -71,6 +71,23 @@ export default function Home() {
     };
   }, [router]);
 
+  // 認証完了後、未スナップショットの過去日 (= 最後の record + 1 日 〜 昨日) を
+  // まとめて記録に書き出す。サーバ Cron を使わず、クライアント発火で catch-up。
+  // また、開きっぱなしの場合に備えて翌 0:01 に再発火を仕込む (単発)。
+  useEffect(() => {
+    if (authState !== "authed") return;
+    void fetch("/api/records/snapshot", { method: "POST" }).catch(() => {});
+
+    const now = new Date();
+    const tomorrow = new Date(now);
+    tomorrow.setHours(24, 1, 0, 0); // 翌 0:01
+    const ms = Math.max(60_000, tomorrow.getTime() - now.getTime());
+    const t = setTimeout(() => {
+      void fetch("/api/records/snapshot", { method: "POST" }).catch(() => {});
+    }, ms);
+    return () => clearTimeout(t);
+  }, [authState]);
+
   // ページ離脱時にロックを残さないよう、unmount で unlock を試みる
   useEffect(() => {
     if (mode !== "edit-template") return;
