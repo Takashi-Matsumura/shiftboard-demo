@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Excalidraw, getSceneVersion } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
-import { ArrowUpToLine, Pencil } from "lucide-react";
+import { ArrowUpToLine } from "lucide-react";
 import {
   buildDateOverlayElements,
   buildGridElements,
@@ -28,7 +28,11 @@ import {
   stripGridElements,
   surnameInitial,
 } from "@/lib/grid";
-import { ScheduleModal, type ScheduleLabelSummary } from "./schedule-modal";
+import {
+  ScheduleDetailPopover,
+  type AnchorRect,
+  type ScheduleLabelSummary,
+} from "./schedule-detail-popover";
 
 const SAVE_DEBOUNCE_MS = 1500;
 // カード移動・リサイズの「操作完了」を判定するためのアイドル時間
@@ -121,6 +125,14 @@ export default function WhiteboardCanvas({
     ids: readonly string[];
   }>({ ids: [] });
   const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  // 「詳細」を開いた瞬間の元カードの screen 座標 (ポップオーバーの出現位置とアニメ起点)。
+  const [activeAnchorRect, setActiveAnchorRect] = useState<AnchorRect | null>(
+    null,
+  );
+  // handleChange (毎フレーム呼ばれる) で activeCardId を読むための ref。
+  // deps に activeCardId を入れると onChange が頻繁に再生成されてしまうため。
+  const activeCardIdRef = useRef<string | null>(null);
+  activeCardIdRef.current = activeCardId;
   // 自動保存 (PATCH) 完了直後にカードの右下へ「✓ 自動保存」を一定時間
   // 表示するための state とタイマー管理。
   const [savedCards, setSavedCards] = useState<
@@ -402,7 +414,7 @@ export default function WhiteboardCanvas({
           : { scrollX, scrollY, zoom: zoomValue },
       );
 
-      // 選択中カードの追跡 (「詳細」ボタンの表示判定のみ。色は顧客連動なので uniformColor は不要)
+      // 選択中カードの追跡 (「前面へ」ボタンの表示判定 + ポップオーバー自動起動の入力)
       const selectedIds = (appState.selectedElementIds ?? {}) as Record<string, boolean>;
       const selectedCards = (elements as Array<{ id?: string; customData?: unknown }>).filter(
         (el) => el.id && selectedIds[el.id] && isCardElement(el),
@@ -414,6 +426,41 @@ export default function WhiteboardCanvas({
         }
         return { ids };
       });
+
+      // ポップオーバー自動起動 / 自動クローズ。
+      // ドラッグ・リサイズ中 (cursorButton: "down") は抑制し、操作完了 (up) のフレームで反映する。
+      // edit-template モードではテンプレ編集に集中させるため起動しない。
+      const cursorButton = (appState.cursorButton as "up" | "down" | undefined) ?? "up";
+      if (currentMode !== "edit-template" && cursorButton === "up") {
+        const currentActive = activeCardIdRef.current;
+        if (ids.length === 1 && ids[0] !== currentActive) {
+          // 単一選択 → 選択カードの screen bounds を anchor として popover を開く
+          const id = ids[0];
+          const card = (elements as Array<{
+            id?: string;
+            x?: number;
+            y?: number;
+            width?: number;
+            height?: number;
+          }>).find((el) => el.id === id);
+          if (card) {
+            const x = card.x ?? 0;
+            const y = card.y ?? 0;
+            const width = card.width ?? 0;
+            const height = card.height ?? 0;
+            setActiveAnchorRect({
+              left: (x + scrollX) * zoomValue,
+              top: (y + scrollY) * zoomValue,
+              width: width * zoomValue,
+              height: height * zoomValue,
+            });
+            setActiveCardId(id);
+          }
+        } else if (ids.length === 0 && currentActive) {
+          setActiveCardId(null);
+          setActiveAnchorRect(null);
+        }
+      }
 
       // 通常モードのみ: カード bounds の変化を検知して dirty キューに積む
       // + 担当者バッジの overlay 用情報を customData から抽出
@@ -530,7 +577,7 @@ export default function WhiteboardCanvas({
     [scheduleSave, flushTimeSync],
   );
 
-  // ScheduleModal で保存されたとき、カードを「顧客カラー化 + 顧客名ラベル + 担当者バッジ」に同期する。
+  // ScheduleDetailPopover で保存されたとき、カードを「顧客カラー化 + 顧客名ラベル + 担当者バッジ」に同期する。
   //   - rectangle: 塗り/枠 = toWhom.color (なければ slate)、customData.color も追随
   //   - schedule-label-v1 text: 顧客名のみ (containerId 経由でカード中央に配置)
   //   - schedule-badge-v1 ellipse + schedule-badge-text-v1 text: 担当者の苗字 1 文字
@@ -725,6 +772,37 @@ export default function WhiteboardCanvas({
       excalidrawAPI.updateScene({
         elements: [...next, ...additions] as never,
       });
+    },
+    [excalidrawAPI],
+  );
+
+  const closeCardDetail = useCallback(() => {
+    setActiveCardId(null);
+    setActiveAnchorRect(null);
+  }, []);
+
+  // ScheduleDetailPopover の削除アクションを受けて、Excalidraw シーンから
+  // カード本体 (rectangle) と紐づく schedule-label / 旧バッジ要素を一括除去する。
+  // ScheduleEntry の DB 削除はモーダル側で完了済み。
+  // ScheduleRecord (過去日のスナップショット) は履歴として残す。
+  const handleScheduleDeleted = useCallback(
+    (cardId: string) => {
+      if (!excalidrawAPI) return;
+      const elements = excalidrawAPI.getSceneElements() as readonly Record<
+        string,
+        unknown
+      >[];
+      const isAssociated = (el: Record<string, unknown>) => {
+        if ((el.id as string | undefined) === cardId) return true;
+        const cd = el.customData as { cardId?: string } | undefined;
+        return cd?.cardId === cardId;
+      };
+      const remaining = elements.filter((el) => !isAssociated(el));
+      if (remaining.length === elements.length) return;
+      excalidrawAPI.updateScene({ elements: remaining as never });
+      setCardSelection((prev) => ({
+        ids: prev.ids.filter((id) => id !== cardId),
+      }));
     },
     [excalidrawAPI],
   );
@@ -1007,24 +1085,17 @@ export default function WhiteboardCanvas({
                 <ArrowUpToLine className="h-3 w-3" />
                 <span>前面へ</span>
               </button>
-              <button
-                type="button"
-                onClick={() => setActiveCardId(cardSelection.ids[0] ?? null)}
-                className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100"
-                title="選択中のカードの詳細を編集"
-              >
-                <Pencil className="h-3 w-3" />
-                <span>詳細</span>
-              </button>
             </span>,
             paletteSlot,
           )
         : null}
 
-      <ScheduleModal
+      <ScheduleDetailPopover
         cardId={activeCardId}
-        onClose={() => setActiveCardId(null)}
+        anchorRect={activeAnchorRect}
+        onClose={closeCardDetail}
         onSaved={handleScheduleSaved}
+        onDeleted={handleScheduleDeleted}
       />
 
       {loadError ? (
