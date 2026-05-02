@@ -10,10 +10,12 @@ import {
   Loader2,
   LayoutGrid,
   Save,
+  Settings,
   Wrench,
   X,
 } from "lucide-react";
 import { AccountBadge } from "./components/account-badge";
+import { SettingsPanel } from "./components/settings-panel";
 import { getISOWeek, getMondayOfWeek } from "@/lib/grid";
 
 const WhiteboardCanvas = dynamic(
@@ -36,6 +38,7 @@ export default function Home() {
   // Excalidraw のツール群 (上部ツールバー・メニュー等) の表示。デフォルトは非表示。
   // ON にすると Excalidraw 標準の zen mode を解除し、シェイプツールやメニューが出る。
   const [showTools, setShowTools] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const weekLabel = useMemo(() => {
     const target = new Date();
@@ -184,6 +187,20 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setSettingsOpen((v) => !v)}
+            className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
+              settingsOpen
+                ? "border-slate-700 bg-slate-700 text-white hover:bg-slate-800"
+                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+            }`}
+            title="設定パネルを開閉する"
+            aria-pressed={settingsOpen}
+          >
+            <Settings className="h-3 w-3" />
+            <span>設定</span>
+          </button>
           <AccountBadge />
         </div>
       </header>
@@ -268,6 +285,11 @@ export default function Home() {
           <span>ツール {showTools ? "ON" : "OFF"}</span>
         </button>
       </footer>
+
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
     </main>
   );
 }
