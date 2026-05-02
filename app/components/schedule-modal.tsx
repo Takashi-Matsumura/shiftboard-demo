@@ -8,17 +8,52 @@ type Entry = {
   whoId: string | null;
   whatId: string | null;
   toWhomId: string | null;
+  startAt: string | null;
+  endAt: string | null;
   notes: string;
 };
 
-const EMPTY: Entry = { whoId: null, whatId: null, toWhomId: null, notes: "" };
+const EMPTY: Entry = {
+  whoId: null,
+  whatId: null,
+  toWhomId: null,
+  startAt: null,
+  endAt: null,
+  notes: "",
+};
+
+// ISO 文字列 (Z 付き) を datetime-local input が受け付ける
+// "YYYY-MM-DDTHH:MM" 形式 (ローカル時刻) に変換する。
+function toDatetimeLocal(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours(),
+  )}:${pad(d.getMinutes())}`;
+}
+
+// datetime-local input の値 ("YYYY-MM-DDTHH:MM", ローカル時刻) を
+// PUT 用の ISO 文字列に戻す。空なら null。
+function fromDatetimeLocal(local: string): string | null {
+  if (!local) return null;
+  const d = new Date(local);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+export type ScheduleLabelSummary = {
+  who: string | null;
+  toWhom: string | null;
+};
 
 type Props = {
   cardId: string | null;
   onClose: () => void;
+  onSaved?: (cardId: string, summary: ScheduleLabelSummary) => void;
 };
 
-export function ScheduleModal({ cardId, onClose }: Props) {
+export function ScheduleModal({ cardId, onClose, onSaved }: Props) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [entry, setEntry] = useState<Entry>(EMPTY);
   const [employees, setEmployees] = useState<Option[]>([]);
@@ -83,7 +118,12 @@ export function ScheduleModal({ cardId, onClose }: Props) {
         setEmployees(employeesBody.employees ?? []);
         setCustomers(customersBody.customers ?? []);
         setTasks(tasksBody.tasks ?? []);
-        setEntry(entryBody.entry ?? EMPTY);
+        const loaded = entryBody.entry ?? EMPTY;
+        setEntry({
+          ...loaded,
+          startAt: toDatetimeLocal(loaded.startAt ?? null),
+          endAt: toDatetimeLocal(loaded.endAt ?? null),
+        });
       } catch (err) {
         if (!cancelled) setError((err as Error).message ?? "ネットワークエラー");
       } finally {
@@ -104,13 +144,20 @@ export function ScheduleModal({ cardId, onClose }: Props) {
       const res = await fetch(`/api/schedule/${encodeURIComponent(cardId)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(entry),
+        body: JSON.stringify({
+          ...entry,
+          startAt: fromDatetimeLocal(entry.startAt ?? ""),
+          endAt: fromDatetimeLocal(entry.endAt ?? ""),
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setError(body.error ?? `保存に失敗しました (${res.status})`);
         return;
       }
+      const who = employees.find((o) => o.id === entry.whoId)?.name ?? null;
+      const toWhom = customers.find((o) => o.id === entry.toWhomId)?.name ?? null;
+      onSaved?.(cardId, { who, toWhom });
       onClose();
     } catch (err) {
       setError((err as Error).message ?? "ネットワークエラー");
@@ -159,6 +206,34 @@ export function ScheduleModal({ cardId, onClose }: Props) {
               emptyHint="未選択"
               fallbackHint="顧客マスター未登録（設定パネルから登録してください）"
             />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-neutral-600">
+                  開始時刻
+                </label>
+                <input
+                  type="datetime-local"
+                  value={entry.startAt ?? ""}
+                  onChange={(e) =>
+                    setEntry((p) => ({ ...p, startAt: e.target.value }))
+                  }
+                  className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-400 focus:ring-2 focus:ring-neutral-900/10 focus:outline-none disabled:bg-neutral-100"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-neutral-600">
+                  終了時刻
+                </label>
+                <input
+                  type="datetime-local"
+                  value={entry.endAt ?? ""}
+                  onChange={(e) =>
+                    setEntry((p) => ({ ...p, endAt: e.target.value }))
+                  }
+                  className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm focus:border-neutral-400 focus:ring-2 focus:ring-neutral-900/10 focus:outline-none disabled:bg-neutral-100"
+                />
+              </div>
+            </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-neutral-600">
                 メモ
