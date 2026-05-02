@@ -17,6 +17,7 @@ import {
   createScheduleLabelElement,
   formatScheduleLabel,
   GRID,
+  gridOriginXY,
   isCardElement,
   isGridFrameElement,
   SCHEDULE_BADGE_KIND,
@@ -41,6 +42,13 @@ const TIME_SYNC_DEBOUNCE_MS = 800;
 const SAVED_INDICATOR_MS = 1800;
 // 30 分グリッド最小サイズ未満のドラッグはクリック扱いで破棄
 const MIN_CARD_SIZE = 16;
+// 長押しでカード追加 (PC/タブレット共通) のしきい値。
+// 短すぎると誤発火、長すぎると待ち遠しいため 500ms。
+const LONG_PRESS_MS = 500;
+// 押下中にこの距離(px)以上動くと長押しキャンセル → Excalidraw のドラッグへ譲る。
+const LONG_PRESS_MOVE_TOLERANCE = 8;
+// 押下から進行表示が出るまでの間。ただのクリック/タップでフラッシュさせない。
+const LONG_PRESS_FEEDBACK_DELAY = 150;
 
 type LoadedData = {
   elements: readonly unknown[];
@@ -59,7 +67,10 @@ type ExcalidrawLikeAPI = {
     offsetTop: number;
   } & Record<string, unknown>;
   getSceneElements: () => readonly unknown[];
-  updateScene: (data: { elements?: readonly unknown[] }) => void;
+  updateScene: (data: {
+    elements?: readonly unknown[];
+    appState?: Record<string, unknown>;
+  }) => void;
 };
 
 type DragState = {
@@ -164,6 +175,25 @@ export default function WhiteboardCanvas({
   const [drag, setDrag] = useState<DragState | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
+  // 長押しによるカード追加。マウス/タッチ/ペンを統一的に扱う pointer events で実装。
+  const longPressRef = useRef<{
+    pointerId: number;
+    startClient: { x: number; y: number };
+    startedAt: number;
+  } | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+  const longPressProgressTimerRef = useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
+  const [longPressUI, setLongPressUI] = useState<{
+    clientX: number;
+    clientY: number;
+    progress: number;
+  } | null>(null);
+
   // window レベルで Shift+Alt 状態を監視。ドラッグ中はオーバーレイの pointer-events を
   // auto にしてイベントを横取りする。
   useEffect(() => {
@@ -180,6 +210,153 @@ export default function WhiteboardCanvas({
       window.removeEventListener("blur", onBlur);
     };
   }, []);
+
+  // 長押しでカード追加。view モードのときだけ有効。Shift+Alt+ドラッグの代替として、
+  // 修飾キー無しで誰でも (タブレット利用者も) 配置できるようにする。
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    if (longPressFeedbackTimerRef.current) {
+      clearTimeout(longPressFeedbackTimerRef.current);
+      longPressFeedbackTimerRef.current = null;
+    }
+    if (longPressProgressTimerRef.current) {
+      clearInterval(longPressProgressTimerRef.current);
+      longPressProgressTimerRef.current = null;
+    }
+    longPressRef.current = null;
+    setLongPressUI(null);
+  }, []);
+
+  const triggerLongPressPlacement = useCallback(
+    (clientX: number, clientY: number) => {
+      const api = excalidrawAPI;
+      if (!api) return;
+      const appState = api.getAppState();
+      const z = appState.zoom?.value ?? 1;
+      const sx = (clientX - appState.offsetLeft) / z - appState.scrollX;
+      const sy = (clientY - appState.offsetTop) / z - appState.scrollY;
+
+      // 横幅は曜日カラムの半分。隣にもう1枚並べられるサイズにし、必要なら
+      // 後から手動でリサイズする。
+      const width = GRID.colWidth / 2;
+      const height = GRID.rowHeight;
+      const origin = gridOriginXY();
+      // 横は「半カラム単位」で押下点が中心になるようスナップ。縦は30分単位。
+      const placedX =
+        Math.round((sx - width / 2 - origin.x) / width) * width + origin.x;
+      const placedY =
+        Math.round((sy - origin.y) / GRID.rowHeight) * GRID.rowHeight +
+        origin.y;
+
+      // 既存カードと重なっても OK。後から追加した要素が最前面に描画されるので
+      // 配列末尾に積むだけで Z 軸の重なりは自然に解決する。
+      const elements = api.getSceneElements();
+      const card = createCardElement({
+        x: placedX,
+        y: placedY,
+        width,
+        height,
+        colorId: cardColor,
+      });
+      const cardId = card.id as string;
+      api.updateScene({
+        elements: [...elements, card],
+        appState: { selectedElementIds: { [cardId]: true } },
+      });
+      if (
+        typeof navigator !== "undefined" &&
+        typeof navigator.vibrate === "function"
+      ) {
+        navigator.vibrate(20);
+      }
+    },
+    [excalidrawAPI, cardColor],
+  );
+
+  useEffect(() => {
+    if (mode !== "view") return;
+
+    const isInsideExcalidraw = (target: EventTarget | null): boolean => {
+      if (!(target instanceof Element)) return false;
+      return Boolean(target.closest(".excalidraw"));
+    };
+
+    const onDown = (e: PointerEvent) => {
+      // 主ボタン (タッチ/ペンは button=0) のみ
+      if (e.button !== 0) return;
+      if (!isInsideExcalidraw(e.target)) return;
+      // Shift+Alt 同時押し中は既存のドラッグ作成 (上級者向け) に任せる
+      if (e.shiftKey && e.altKey) return;
+
+      cancelLongPress();
+      const startClient = { x: e.clientX, y: e.clientY };
+      const startedAt = performance.now();
+      longPressRef.current = {
+        pointerId: e.pointerId,
+        startClient,
+        startedAt,
+      };
+
+      longPressFeedbackTimerRef.current = setTimeout(() => {
+        // 進行表示開始
+        setLongPressUI({ clientX: startClient.x, clientY: startClient.y, progress: 0 });
+        longPressProgressTimerRef.current = setInterval(() => {
+          const current = longPressRef.current;
+          if (!current) return;
+          const elapsed = performance.now() - current.startedAt;
+          const ratio = Math.min(
+            1,
+            Math.max(
+              0,
+              (elapsed - LONG_PRESS_FEEDBACK_DELAY) /
+                (LONG_PRESS_MS - LONG_PRESS_FEEDBACK_DELAY),
+            ),
+          );
+          setLongPressUI((prev) =>
+            prev && prev.progress !== ratio ? { ...prev, progress: ratio } : prev,
+          );
+        }, 30);
+      }, LONG_PRESS_FEEDBACK_DELAY);
+
+      longPressTimerRef.current = setTimeout(() => {
+        const current = longPressRef.current;
+        if (!current) return;
+        triggerLongPressPlacement(current.startClient.x, current.startClient.y);
+        cancelLongPress();
+      }, LONG_PRESS_MS);
+    };
+
+    const onMove = (e: PointerEvent) => {
+      const current = longPressRef.current;
+      if (!current || current.pointerId !== e.pointerId) return;
+      const dx = e.clientX - current.startClient.x;
+      const dy = e.clientY - current.startClient.y;
+      if (Math.hypot(dx, dy) > LONG_PRESS_MOVE_TOLERANCE) {
+        cancelLongPress();
+      }
+    };
+
+    const onUp = (e: PointerEvent) => {
+      const current = longPressRef.current;
+      if (!current || current.pointerId !== e.pointerId) return;
+      cancelLongPress();
+    };
+
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onUp, true);
+    window.addEventListener("pointercancel", onUp, true);
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onUp, true);
+      window.removeEventListener("pointercancel", onUp, true);
+      cancelLongPress();
+    };
+  }, [mode, cancelLongPress, triggerLongPressPlacement]);
 
   // モード切替を検知して再ロード
   useEffect(() => {
@@ -952,6 +1129,10 @@ export default function WhiteboardCanvas({
         left: 0,
         right: 0,
         bottom: bottomOffset,
+        // iOS Safari の長押し選択メニュー / コールアウトを抑制 (input/textarea は除外される)。
+        WebkitTouchCallout: "none",
+        WebkitUserSelect: "none",
+        userSelect: "none",
       }}
       onPointerDown={() => {
         const active = document.activeElement;
@@ -997,6 +1178,9 @@ export default function WhiteboardCanvas({
 
       {/* ドラッグ中のプレビュー (viewport coords / fixed) */}
       {drag ? <CardPreview drag={drag} colorId={cardColor} /> : null}
+
+      {/* 長押し進行表示 (viewport coords / fixed)。LONG_PRESS_FEEDBACK_DELAY 経過後に出現。 */}
+      {longPressUI ? <LongPressProgressRing ui={longPressUI} /> : null}
 
       {/* 担当者バッジ (HTML overlay)。Excalidraw 要素ではないため、カードの
           リサイズやアスペクト比に干渉しない。社員マスターの color を反映。 */}
@@ -1111,14 +1295,7 @@ function CardPlacementHint() {
   return (
     <div className="flex items-center gap-1.5">
       <span className="text-[10px] text-slate-500">
-        <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
-          ⇧
-        </kbd>
-        +
-        <kbd className="rounded border border-slate-300 bg-slate-50 px-1 font-mono text-[10px]">
-          ⌥
-        </kbd>
-        + ドラッグで配置
+        空きセルを長押しでカード追加
       </span>
     </div>
   );
@@ -1152,5 +1329,52 @@ function CardPreview({
         zIndex: 70,
       }}
     />
+  );
+}
+
+function LongPressProgressRing({
+  ui,
+}: {
+  ui: { clientX: number; clientY: number; progress: number };
+}) {
+  const size = 44;
+  const stroke = 3;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c * (1 - ui.progress);
+  return (
+    <svg
+      width={size}
+      height={size}
+      style={{
+        position: "fixed",
+        left: ui.clientX - size / 2,
+        top: ui.clientY - size / 2,
+        pointerEvents: "none",
+        zIndex: 70,
+      }}
+      aria-hidden
+    >
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        stroke="rgba(15, 23, 42, 0.18)"
+        strokeWidth={stroke}
+        fill="none"
+      />
+      <circle
+        cx={size / 2}
+        cy={size / 2}
+        r={r}
+        stroke="rgb(15, 23, 42)"
+        strokeWidth={stroke}
+        fill="none"
+        strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={offset}
+        transform={`rotate(-90 ${size / 2} ${size / 2})`}
+      />
+    </svg>
   );
 }
