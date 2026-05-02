@@ -100,6 +100,31 @@ export async function PUT(
   return NextResponse.json({ entry });
 }
 
+// カードを破棄するときの後始末。ScheduleEntry を削除し、
+// 過去日のスナップショット (ScheduleRecord) は履歴として残す。
+// 該当エントリが存在しない場合 (P2025) も冪等に 200 を返す。
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ cardId: string }> },
+) {
+  const user = await getUser(request);
+  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+
+  const { cardId } = await params;
+  if (!CARD_ID_RE.test(cardId)) {
+    return NextResponse.json({ error: "invalid cardId" }, { status: 400 });
+  }
+
+  try {
+    await prisma.scheduleEntry.delete({ where: { cardId } });
+  } catch (err) {
+    const code = (err as { code?: string }).code;
+    if (code !== "P2025") throw err;
+  }
+
+  return NextResponse.json({ ok: true });
+}
+
 // カードの座標から導出した startAt / endAt のみを書き戻す部分更新。
 // 他フィールド (whoId / whatId / toWhomId / notes) は保持する。
 export async function PATCH(
