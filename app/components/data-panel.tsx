@@ -8,7 +8,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { Filter, Loader2, Pencil, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Filter, Loader2, Pencil, X } from "lucide-react";
 import { CARD_COLORS, type CardColorId } from "@/lib/grid";
 
 type Master = { id: string; name: string; color: CardColorId };
@@ -48,6 +48,8 @@ export function DataPanel({ open, onClose }: Props) {
   const [filterToWhomId, setFilterToWhomId] = useState<string>("");
   const [filterDateFrom, setFilterDateFrom] = useState<string>("");
   const [filterDateTo, setFilterDateTo] = useState<string>("");
+  // フィルター UI の折りたたみ状態 (初期は閉じる)
+  const [filterOpen, setFilterOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -179,6 +181,8 @@ export function DataPanel({ open, onClose }: Props) {
             onDateToChange={setFilterDateTo}
             onReset={resetFilters}
             hasActive={hasActiveFilter}
+            open={filterOpen}
+            onToggle={() => setFilterOpen((v) => !v)}
           />
         </div>
 
@@ -226,6 +230,8 @@ function FilterBar({
   onDateToChange,
   onReset,
   hasActive,
+  open,
+  onToggle,
 }: {
   employees: Master[];
   customers: Master[];
@@ -239,15 +245,32 @@ function FilterBar({
   onDateToChange: (s: string) => void;
   onReset: () => void;
   hasActive: boolean;
+  open: boolean;
+  onToggle: () => void;
 }) {
   return (
-    <div className="mt-2 rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
-      <div className="mb-1 flex items-center justify-between">
-        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-600">
+    <div className="mt-2 rounded border border-slate-200 bg-slate-50">
+      <div className="flex items-center justify-between px-2 py-1">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-600 hover:text-slate-800"
+        >
+          {open ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronRight className="h-3 w-3" />
+          )}
           <Filter className="h-3 w-3" />
-          フィルター
-        </span>
-        {hasActive ? (
+          <span>フィルター</span>
+          {!open && hasActive ? (
+            <span className="ml-1 rounded bg-slate-700 px-1 py-0 text-[9px] font-medium text-white">
+              ON
+            </span>
+          ) : null}
+        </button>
+        {open && hasActive ? (
           <button
             type="button"
             onClick={onReset}
@@ -257,22 +280,24 @@ function FilterBar({
           </button>
         ) : null}
       </div>
-      <div className="grid grid-cols-2 gap-1.5">
-        <FilterSelect
-          label="担当"
-          value={whoId}
-          options={employees}
-          onChange={onWhoIdChange}
-        />
-        <FilterSelect
-          label="顧客"
-          value={toWhomId}
-          options={customers}
-          onChange={onToWhomIdChange}
-        />
-        <FilterDate label="日付 (開始)" value={dateFrom} onChange={onDateFromChange} />
-        <FilterDate label="日付 (終了)" value={dateTo} onChange={onDateToChange} />
-      </div>
+      {open ? (
+        <div className="grid grid-cols-2 gap-1.5 border-t border-slate-200 px-2 py-1.5">
+          <FilterSelect
+            label="担当"
+            value={whoId}
+            options={employees}
+            onChange={onWhoIdChange}
+          />
+          <FilterSelect
+            label="顧客"
+            value={toWhomId}
+            options={customers}
+            onChange={onToWhomIdChange}
+          />
+          <FilterDate label="日付 (開始)" value={dateFrom} onChange={onDateFromChange} />
+          <FilterDate label="日付 (終了)" value={dateTo} onChange={onDateToChange} />
+        </div>
+      ) : null}
     </div>
   );
 }
