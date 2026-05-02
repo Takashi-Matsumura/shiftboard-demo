@@ -4,13 +4,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Excalidraw, getSceneVersion } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
-import { Pencil } from "lucide-react";
+import { ArrowUpToLine, Pencil } from "lucide-react";
 import {
   buildDateOverlayElements,
   buildGridElements,
   cardBoundsToSchedule,
   CARD_COLORS,
   CARD_KIND,
+  CARD_OPACITY,
   type CardColorId,
   createCardElement,
   createScheduleBadgeElements,
@@ -596,7 +597,7 @@ export default function WhiteboardCanvas({
         .map((el) => {
           const elId = (el as { id?: string }).id;
 
-          // カード本体: 色 + boundElements + groupIds + 角を正方形化
+          // カード本体: 色 + boundElements + groupIds + 角を正方形化 + 半透明
           if (elId === cardId) {
             const prevCustom =
               ((el as Record<string, unknown>).customData as Record<
@@ -608,6 +609,7 @@ export default function WhiteboardCanvas({
               strokeColor: cardPalette.stroke,
               backgroundColor: cardPalette.fill,
               roundness: null,
+              opacity: CARD_OPACITY,
               customData: { ...prevCustom, kind: CARD_KIND, color: desiredColor },
               boundElements:
                 nextBoundElements.length > 0 ? nextBoundElements : null,
@@ -710,6 +712,44 @@ export default function WhiteboardCanvas({
 
       excalidrawAPI.updateScene({
         elements: [...next, ...additions] as never,
+      });
+    },
+    [excalidrawAPI],
+  );
+
+  // 選択中の 1 枚のカードを最前面へ移動。Excalidraw は fractional index で
+  // z-order を管理するため、関連 4 要素 (rectangle + label + badge ellipse + badge text)
+  // を配列末尾へ並べ替えつつ index を null に落とすと、Excalidraw 側が最大 index を再付与する。
+  const bringCardToFront = useCallback(
+    (cardId: string) => {
+      if (!excalidrawAPI) return;
+      const elements = excalidrawAPI.getSceneElements() as readonly Record<
+        string,
+        unknown
+      >[];
+      const isAssociated = (el: Record<string, unknown>) => {
+        if ((el.id as string | undefined) === cardId) return true;
+        const cd = el.customData as { cardId?: string } | undefined;
+        return cd?.cardId === cardId;
+      };
+      const others: Record<string, unknown>[] = [];
+      const moved: Record<string, unknown>[] = [];
+      for (const el of elements) {
+        if (isAssociated(el)) {
+          moved.push({
+            ...el,
+            index: null,
+            version: ((el.version as number | undefined) ?? 0) + 1,
+            versionNonce: Math.floor(Math.random() * 2 ** 31),
+            updated: Date.now(),
+          });
+        } else {
+          others.push(el);
+        }
+      }
+      if (moved.length === 0) return;
+      excalidrawAPI.updateScene({
+        elements: [...others, ...moved] as never,
       });
     },
     [excalidrawAPI],
@@ -905,15 +945,26 @@ export default function WhiteboardCanvas({
 
       {cardModeAvailable && paletteSlot && cardSelection.ids.length === 1
         ? createPortal(
-            <button
-              type="button"
-              onClick={() => setActiveCardId(cardSelection.ids[0] ?? null)}
-              className="ml-2 inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100"
-              title="選択中のカードの詳細を編集"
-            >
-              <Pencil className="h-3 w-3" />
-              <span>詳細</span>
-            </button>,
+            <span className="ml-2 inline-flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => bringCardToFront(cardSelection.ids[0] ?? "")}
+                className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100"
+                title="選択中のカードを最前面に移動"
+              >
+                <ArrowUpToLine className="h-3 w-3" />
+                <span>前面へ</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveCardId(cardSelection.ids[0] ?? null)}
+                className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100"
+                title="選択中のカードの詳細を編集"
+              >
+                <Pencil className="h-3 w-3" />
+                <span>詳細</span>
+              </button>
+            </span>,
             paletteSlot,
           )
         : null}
