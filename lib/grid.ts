@@ -412,6 +412,56 @@ export function gridOriginXY(): { x: number; y: number } {
   };
 }
 
+// カードの bounding box (シーン座標) と週オフセットから、
+// スケジュールの開始日時 / 終了日時を導出する。
+// - 列 (曜日): 月=0 .. 日=6
+// - 行: hoursStart からの 30 分単位インデックス
+// 列・行とも四捨五入で最寄りの目盛にスナップする。
+// 範囲外 (列 < 0 または列 > 6) のときは null。
+export function cardBoundsToSchedule(args: {
+  card: { x: number; y: number; width: number; height: number };
+  weekOffset: number;
+  now?: Date;
+}): { startAt: Date; endAt: Date } | null {
+  const colStart = GRID.origin.x + GRID.labelGutter;
+  const rowStart = GRID.origin.y + GRID.headerHeight;
+
+  const startCol = Math.round((args.card.x - colStart) / GRID.colWidth);
+  const endCol =
+    Math.round((args.card.x + args.card.width - colStart) / GRID.colWidth) - 1;
+  const startMin = Math.round((args.card.y - rowStart) / GRID.rowHeight);
+  const endMin = Math.round(
+    (args.card.y + args.card.height - rowStart) / GRID.rowHeight,
+  );
+
+  if (startCol < 0 || startCol > 6 || endCol < 0 || endCol > 6) return null;
+  if (startMin < 0 || endMin <= startMin) return null;
+
+  const base = args.now ? new Date(args.now) : new Date();
+  base.setDate(base.getDate() + args.weekOffset * 7);
+  const monday = getMondayOfWeek(base);
+
+  const startAt = new Date(monday);
+  startAt.setDate(startAt.getDate() + startCol);
+  startAt.setHours(
+    GRID.hoursStart + Math.floor(startMin / 2),
+    (startMin % 2) * 30,
+    0,
+    0,
+  );
+
+  const endAt = new Date(monday);
+  endAt.setDate(endAt.getDate() + endCol);
+  endAt.setHours(
+    GRID.hoursStart + Math.floor(endMin / 2),
+    (endMin % 2) * 30,
+    0,
+    0,
+  );
+
+  return { startAt, endAt };
+}
+
 // シーン座標を 30 分グリッドにスナップ。原点はグリッドの左上端。
 export function snapToHalfHourGrid(x: number, y: number): { x: number; y: number } {
   const o = gridOriginXY();
