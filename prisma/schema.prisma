@@ -48,3 +48,56 @@ model Template {
   editingStartedAt DateTime? // 自動解放のための参考用 (現状は手動解放のみ)
   updatedAt        DateTime  @updatedAt
 }
+
+// 「誰が」で選択する社員マスター。
+model Employee {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries ScheduleEntry[]
+}
+
+// 「誰に」で選択する顧客マスター。
+model Customer {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries ScheduleEntry[]
+}
+
+// 「何を」の業務マスター。
+model Task {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  entries ScheduleEntry[]
+}
+
+// 1 枚のカード (Excalidraw 要素) に紐付く業務メタ情報。
+// cardId は createCardElement() が発番する "card:..." 形式の文字列。
+// who / what / toWhom はマスターからの選択 (未選択なら null)。
+model ScheduleEntry {
+  id        String   @id @default(cuid())
+  cardId    String   @unique
+  whoId     String?
+  whatId    String?
+  toWhomId  String?
+  notes     String   @default("")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  who    Employee? @relation(fields: [whoId], references: [id], onDelete: SetNull)
+  what   Task?     @relation(fields: [whatId], references: [id], onDelete: SetNull)
+  toWhom Customer? @relation(fields: [toWhomId], references: [id], onDelete: SetNull)
+
+  @@index([cardId])
+  @@index([whoId])
+  @@index([whatId])
+  @@index([toWhomId])
+}

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Excalidraw, getSceneVersion } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
+import { Pencil } from "lucide-react";
 import {
   buildDateOverlayElements,
   buildGridElements,
@@ -16,6 +17,7 @@ import {
   snapToHalfHourGrid,
   stripGridElements,
 } from "@/lib/grid";
+import { ScheduleModal } from "./schedule-modal";
 
 const SAVE_DEBOUNCE_MS = 1500;
 // 30 分グリッド最小サイズ未満のドラッグはクリック扱いで破棄
@@ -91,6 +93,7 @@ export default function WhiteboardCanvas({
     ids: readonly string[];
     uniformColor: CardColorId | null;
   }>({ ids: [], uniformColor: null });
+  const [activeCardId, setActiveCardId] = useState<string | null>(null);
 
   const [shiftAlt, setShiftAlt] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
@@ -528,6 +531,26 @@ export default function WhiteboardCanvas({
             paletteSlot,
           )
         : null}
+
+      {cardModeAvailable && paletteSlot && cardSelection.ids.length === 1
+        ? createPortal(
+            <button
+              type="button"
+              onClick={() => setActiveCardId(cardSelection.ids[0] ?? null)}
+              className="ml-2 inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100"
+              title="選択中のカードの詳細を編集"
+            >
+              <Pencil className="h-3 w-3" />
+              <span>詳細</span>
+            </button>,
+            paletteSlot,
+          )
+        : null}
+
+      <ScheduleModal
+        cardId={activeCardId}
+        onClose={() => setActiveCardId(null)}
+      />
 
       {loadError ? (
         <div className="absolute top-2 right-2 text-[10px] text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1 shadow-sm">

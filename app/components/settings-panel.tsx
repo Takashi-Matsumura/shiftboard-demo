@@ -1,6 +1,9 @@
 "use client";
 
-import { X } from "lucide-react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { Loader2, Plus, Trash2, X } from "lucide-react";
+
+type Option = { id: string; name: string };
 
 type Props = {
   open: boolean;
@@ -39,8 +42,178 @@ export function SettingsPanel({ open, onClose }: Props) {
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="h-[calc(100%-2.25rem)] overflow-auto" />
+        <div className="h-[calc(100%-2.25rem)] space-y-6 overflow-auto px-4 py-4">
+          <MasterSection
+            title="社員マスター"
+            description="「誰が」で選択できる社員を登録します。"
+            collectionPath="/api/employees"
+            collectionKey="employees"
+            active={open}
+          />
+          <MasterSection
+            title="業務マスター"
+            description="「何を」で選択できる業務を登録します。"
+            collectionPath="/api/tasks"
+            collectionKey="tasks"
+            active={open}
+          />
+          <MasterSection
+            title="顧客マスター"
+            description="「誰に」で選択できる顧客を登録します。"
+            collectionPath="/api/customers"
+            collectionKey="customers"
+            active={open}
+          />
+        </div>
       </div>
     </div>
+  );
+}
+
+function MasterSection({
+  title,
+  description,
+  collectionPath,
+  collectionKey,
+  active,
+}: {
+  title: string;
+  description: string;
+  collectionPath: string;
+  collectionKey: "employees" | "customers" | "tasks";
+  active: boolean;
+}) {
+  const [items, setItems] = useState<Option[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(collectionPath);
+      const body = (await res.json().catch(() => ({}))) as Record<string, unknown> & {
+        error?: string;
+      };
+      if (!res.ok) {
+        setError(body.error ?? `読み込みに失敗しました (${res.status})`);
+        return;
+      }
+      setItems((body[collectionKey] as Option[]) ?? []);
+    } catch (err) {
+      setError((err as Error).message ?? "ネットワークエラー");
+    } finally {
+      setLoading(false);
+    }
+  }, [collectionPath, collectionKey]);
+
+  useEffect(() => {
+    if (!active) return;
+    load();
+  }, [active, load]);
+
+  async function add(e: FormEvent) {
+    e.preventDefault();
+    const trimmed = name.trim();
+    if (!trimmed || adding) return;
+    setError(null);
+    setAdding(true);
+    try {
+      const res = await fetch(collectionPath, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: trimmed }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? `追加に失敗しました (${res.status})`);
+        return;
+      }
+      setName("");
+      await load();
+    } catch (err) {
+      setError((err as Error).message ?? "ネットワークエラー");
+    } finally {
+      setAdding(false);
+    }
+  }
+
+  async function remove(id: string) {
+    setError(null);
+    try {
+      const res = await fetch(`${collectionPath}/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(body.error ?? `削除に失敗しました (${res.status})`);
+        return;
+      }
+      await load();
+    } catch (err) {
+      setError((err as Error).message ?? "ネットワークエラー");
+    }
+  }
+
+  return (
+    <section>
+      <header className="mb-2">
+        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+        <p className="text-[11px] text-slate-500">{description}</p>
+      </header>
+
+      <form onSubmit={add} className="mb-2 flex items-center gap-2">
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="名前を入力"
+          className="flex-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs focus:border-neutral-400 focus:ring-2 focus:ring-neutral-900/10 focus:outline-none disabled:bg-neutral-100"
+          disabled={adding}
+        />
+        <button
+          type="submit"
+          disabled={adding || name.trim().length === 0}
+          className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-2 py-1 text-[11px] font-medium text-white hover:bg-neutral-700 disabled:opacity-60"
+        >
+          {adding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+          <span>追加</span>
+        </button>
+      </form>
+
+      {error ? (
+        <p className="mb-2 rounded border border-red-200 bg-red-50 px-2 py-1 text-[11px] text-red-600">
+          {error}
+        </p>
+      ) : null}
+
+      <ul className="space-y-1">
+        {loading && items.length === 0 ? (
+          <li className="text-[11px] text-slate-400">
+            <Loader2 className="inline h-3 w-3 animate-spin" /> 読み込み中...
+          </li>
+        ) : items.length === 0 ? (
+          <li className="text-[11px] text-slate-400">未登録</li>
+        ) : (
+          items.map((it) => (
+            <li
+              key={it.id}
+              className="flex items-center justify-between rounded border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700"
+            >
+              <span>{it.name}</span>
+              <button
+                type="button"
+                onClick={() => remove(it.id)}
+                className="inline-flex h-5 w-5 items-center justify-center rounded text-slate-400 hover:bg-red-50 hover:text-red-600"
+                title="削除"
+                aria-label={`${it.name} を削除`}
+              >
+                <Trash2 className="h-3 w-3" />
+              </button>
+            </li>
+          ))
+        )}
+      </ul>
+    </section>
   );
 }
