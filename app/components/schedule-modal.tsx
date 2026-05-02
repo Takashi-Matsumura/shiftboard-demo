@@ -45,7 +45,10 @@ function fromDatetimeLocal(local: string): string | null {
 
 export type ScheduleLabelSummary = {
   who: { name: string; color: CardColorId } | null;
+  what: { name: string; color: CardColorId } | null;
   toWhom: { name: string; color: CardColorId } | null;
+  startAt: string | null;
+  endAt: string | null;
 };
 
 type Props = {
@@ -157,10 +160,14 @@ export function ScheduleModal({ cardId, onClose, onSaved }: Props) {
         return;
       }
       const whoOpt = employees.find((o) => o.id === entry.whoId) ?? null;
+      const whatOpt = tasks.find((o) => o.id === entry.whatId) ?? null;
       const toWhomOpt = customers.find((o) => o.id === entry.toWhomId) ?? null;
       onSaved?.(cardId, {
         who: whoOpt ? { name: whoOpt.name, color: whoOpt.color } : null,
+        what: whatOpt ? { name: whatOpt.name, color: whatOpt.color } : null,
         toWhom: toWhomOpt ? { name: toWhomOpt.name, color: toWhomOpt.color } : null,
+        startAt: fromDatetimeLocal(entry.startAt ?? ""),
+        endAt: fromDatetimeLocal(entry.endAt ?? ""),
       });
       onClose();
     } catch (err) {
