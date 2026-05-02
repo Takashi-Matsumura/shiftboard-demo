@@ -14,7 +14,6 @@ import {
   CARD_OPACITY,
   type CardColorId,
   createCardElement,
-  createScheduleBadgeElements,
   createScheduleLabelElement,
   formatScheduleLabel,
   isCardElement,
@@ -126,6 +125,16 @@ export default function WhiteboardCanvas({
     ReadonlyArray<{
       id: string;
       bounds: { x: number; y: number; w: number; h: number };
+    }>
+  >([]);
+  // 各カードの「担当者バッジ」情報。Excalidraw 要素の customData から抽出して、
+  // HTML オーバーレイで色付き丸バッジを描画するために保持する。
+  const [cardBadges, setCardBadges] = useState<
+    ReadonlyArray<{
+      id: string;
+      bounds: { x: number; y: number; w: number; h: number };
+      initial: string;
+      color: CardColorId;
     }>
   >([]);
   const savedTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
@@ -405,6 +414,7 @@ export default function WhiteboardCanvas({
       });
 
       // 通常モードのみ: カード bounds の変化を検知して dirty キューに積む
+      // + 担当者バッジの overlay 用情報を customData から抽出
       if (currentMode !== "edit-template") {
         const cards = (elements as Array<{
           id?: string;
@@ -416,6 +426,12 @@ export default function WhiteboardCanvas({
         }>).filter((el) => el.id && isCardElement(el));
         const seen = new Set<string>();
         const newDirty: string[] = [];
+        const nextBadges: Array<{
+          id: string;
+          bounds: { x: number; y: number; w: number; h: number };
+          initial: string;
+          color: CardColorId;
+        }> = [];
         for (const card of cards) {
           const id = card.id as string;
           seen.add(id);
@@ -437,11 +453,43 @@ export default function WhiteboardCanvas({
             newDirty.push(id);
           }
           cardBoundsRef.current.set(id, bounds);
+          const cd = card.customData as
+            | { whoInitial?: string | null; whoColor?: CardColorId | null }
+            | undefined;
+          if (cd?.whoInitial && cd?.whoColor) {
+            nextBadges.push({
+              id,
+              bounds,
+              initial: cd.whoInitial,
+              color: cd.whoColor,
+            });
+          }
         }
         for (const id of Array.from(cardBoundsRef.current.keys())) {
           if (!seen.has(id)) cardBoundsRef.current.delete(id);
         }
         boundsInitializedRef.current = true;
+
+        setCardBadges((prev) => {
+          if (
+            prev.length === nextBadges.length &&
+            prev.every((p, i) => {
+              const n = nextBadges[i];
+              return (
+                p.id === n.id &&
+                p.initial === n.initial &&
+                p.color === n.color &&
+                p.bounds.x === n.bounds.x &&
+                p.bounds.y === n.bounds.y &&
+                p.bounds.w === n.bounds.w &&
+                p.bounds.h === n.bounds.h
+              );
+            })
+          ) {
+            return prev;
+          }
+          return nextBadges;
+        });
 
         if (newDirty.length > 0) {
           for (const id of newDirty) dirtyCardIdsRef.current.add(id);
@@ -505,11 +553,21 @@ export default function WhiteboardCanvas({
         | undefined;
       if (!card) return;
 
-      const desiredColor: CardColorId = summary.toWhom?.color ?? "slate";
-      const cardPalette =
-        CARD_COLORS.find((c) => c.id === desiredColor) ?? CARD_COLORS[5];
-      const labelText = formatScheduleLabel({ toWhom: summary.toWhom?.name ?? null });
-      const badgeChar = summary.who ? surnameInitial(summary.who.name) : "";
+      // カード塗り = 顧客カラー (toWhom)、枠線 = 担当社員カラー (who)。
+      // どちらか欠ければ slate にフォールバック。
+      const fillColorId: CardColorId = summary.toWhom?.color ?? "slate";
+      const strokeColorId: CardColorId = summary.who?.color ?? fillColorId;
+      const fillPalette =
+        CARD_COLORS.find((c) => c.id === fillColorId) ?? CARD_COLORS[5];
+      const strokePalette =
+        CARD_COLORS.find((c) => c.id === strokeColorId) ?? CARD_COLORS[5];
+      const labelText = formatScheduleLabel({
+        toWhom: summary.toWhom ? { name: summary.toWhom.name } : null,
+      });
+      // 担当者の 1 文字バッジは HTML オーバーレイで描画するため、カードの customData に
+      // 苗字 1 文字と社員カラーを保存しておく (リロード後も復元できるように)。
+      const whoInitial = summary.who ? surnameInitial(summary.who.name) : null;
+      const whoColor: CardColorId | null = summary.who ? summary.who.color : null;
 
       const customDataOf = (el: Record<string, unknown>) =>
         (el.customData as { kind?: string; cardId?: string } | undefined) ?? {};
@@ -521,14 +579,18 @@ export default function WhiteboardCanvas({
       const existingLabel = elements.find((el) =>
         matchesCard(el, SCHEDULE_LABEL_KIND),
       ) as (Record<string, unknown> & { id: string }) | undefined;
-      const existingBadgeEllipse = elements.find((el) =>
-        matchesCard(el, SCHEDULE_BADGE_KIND),
-      ) as (Record<string, unknown> & { id: string }) | undefined;
-      const existingBadgeText = elements.find((el) =>
-        matchesCard(el, SCHEDULE_BADGE_TEXT_KIND),
-      ) as (Record<string, unknown> & { id: string }) | undefined;
+      // 旧バッジ要素 (ellipse + text) のクリーンアップ対象
+      const oldBadgeIds = new Set<string>();
+      for (const el of elements) {
+        if (
+          matchesCard(el as Record<string, unknown>, SCHEDULE_BADGE_KIND) ||
+          matchesCard(el as Record<string, unknown>, SCHEDULE_BADGE_TEXT_KIND)
+        ) {
+          oldBadgeIds.add((el as { id: string }).id);
+        }
+      }
 
-      const removeIds = new Set<string>();
+      const removeIds = new Set<string>(oldBadgeIds);
       const additions: Record<string, unknown>[] = [];
 
       const bump = (el: Record<string, unknown>): Record<string, unknown> => ({
@@ -538,7 +600,8 @@ export default function WhiteboardCanvas({
         updated: Date.now(),
       });
 
-      // === 顧客名ラベル ===
+      // === 顧客名 + 担当者頭文字を結合したラベル ===
+      let newLabelId: string | null = null;
       if (labelText === "") {
         if (existingLabel) removeIds.add(existingLabel.id);
       } else if (!existingLabel) {
@@ -553,51 +616,33 @@ export default function WhiteboardCanvas({
           text: labelText,
         });
         additions.push(label);
+        newLabelId = label.id as string;
       }
-      // 既存ラベルの文字更新は下の map で処理
+      // 既存ラベルの更新は下の map で処理
 
-      // === 担当者バッジ ===
-      const hasBoth = Boolean(existingBadgeEllipse && existingBadgeText);
-      const wantsBadge = Boolean(summary.who);
-      let recreateBadge = false;
-      if (!wantsBadge) {
-        if (existingBadgeEllipse) removeIds.add(existingBadgeEllipse.id);
-        if (existingBadgeText) removeIds.add(existingBadgeText.id);
-      } else if (!hasBoth) {
-        // 片方欠損または未生成 → 両方作り直し
-        if (existingBadgeEllipse) removeIds.add(existingBadgeEllipse.id);
-        if (existingBadgeText) removeIds.add(existingBadgeText.id);
-        recreateBadge = true;
-      }
-      if (recreateBadge && summary.who) {
-        const { ellipse, text } = createScheduleBadgeElements({
-          cardId,
-          card: { x: card.x, y: card.y },
-          color: summary.who.color,
-          char: badgeChar,
-        });
-        additions.push(ellipse, text);
-      }
-      // 既存バッジの色/文字更新は下の map で処理
-
-      // === card.boundElements / groupIds の再計算 ===
-      // ラベル / バッジは containerId を使わず groupIds で連動させるため、
-      // boundElements からは削除する (旧データの掃除も兼ねる)。
-      const nextBoundElements = (card.boundElements ?? []).filter(
+      // === card.boundElements の再計算 ===
+      // 旧バッジへの参照と削除予定ラベル参照を除去し、ラベル新規追加なら追記。
+      // containerId 経由の bound text を 1 件だけ持つ状態に正規化する。
+      const baseBound = (card.boundElements ?? []).filter(
         (b) => !removeIds.has(b.id) && b.id !== existingLabel?.id,
       );
-      const wantsGroup = wantsBadge || labelText !== "";
-      const nextGroupIds = (() => {
-        const prev = (card.groupIds ?? []).filter((g) => g !== cardId);
-        return wantsGroup ? [...prev, cardId] : prev;
-      })();
+      if (existingLabel && labelText !== "") {
+        baseBound.push({ type: "text", id: existingLabel.id });
+      }
+      if (newLabelId) {
+        baseBound.push({ type: "text", id: newLabelId });
+      }
+      const nextBoundElements = baseBound;
+      // groupIds は使わない (Excalidraw のグループリサイズがアスペクト比を縛るため)
+      const nextGroupIds = (card.groupIds ?? []).filter((g) => g !== cardId);
 
       const next = elements
         .filter((el) => !removeIds.has(((el as { id?: string }).id ?? "")))
         .map((el) => {
           const elId = (el as { id?: string }).id;
 
-          // カード本体: 色 + boundElements + groupIds + 角を正方形化 + 半透明
+          // カード本体: 塗り=顧客カラー / 枠=担当社員カラー / 角正方形 / 半透明
+          // + boundElements / groupIds 解除 + 担当者バッジ用 customData
           if (elId === cardId) {
             const prevCustom =
               ((el as Record<string, unknown>).customData as Record<
@@ -606,28 +651,37 @@ export default function WhiteboardCanvas({
               > | undefined) ?? {};
             return bump({
               ...el,
-              strokeColor: cardPalette.stroke,
-              backgroundColor: cardPalette.fill,
+              strokeColor: strokePalette.stroke,
+              backgroundColor: fillPalette.fill,
               roundness: null,
               opacity: CARD_OPACITY,
-              customData: { ...prevCustom, kind: CARD_KIND, color: desiredColor },
+              customData: {
+                ...prevCustom,
+                kind: CARD_KIND,
+                color: fillColorId,
+                whoInitial,
+                whoColor,
+              },
               boundElements:
                 nextBoundElements.length > 0 ? nextBoundElements : null,
               groupIds: nextGroupIds,
             });
           }
 
-          // 既存ラベル: テキスト更新 + bbox 再計算でカード中央へ + containerId 解除
+          // 既存ラベル: テキスト + bbox 再計算 + containerId バインド
           if (
             existingLabel &&
             elId === existingLabel.id &&
             labelText !== ""
           ) {
             const b = scheduleLabelBounds({
-              x: card.x,
-              y: card.y,
-              width: card.width,
-              height: card.height,
+              card: {
+                x: card.x,
+                y: card.y,
+                width: card.width,
+                height: card.height,
+              },
+              text: labelText,
             });
             return bump({
               ...(el as Record<string, unknown>),
@@ -637,71 +691,9 @@ export default function WhiteboardCanvas({
               y: b.y,
               width: b.width,
               height: b.height,
-              containerId: null,
+              containerId: cardId,
               autoResize: false,
-              groupIds: [cardId],
-              textAlign: "center",
-              verticalAlign: "middle",
-            });
-          }
-
-          // 既存バッジ ellipse: 色更新
-          if (
-            wantsBadge &&
-            hasBoth &&
-            existingBadgeEllipse &&
-            elId === existingBadgeEllipse.id &&
-            summary.who
-          ) {
-            const prevCustom =
-              ((el as Record<string, unknown>).customData as Record<
-                string,
-                unknown
-              > | undefined) ?? {};
-            const p =
-              CARD_COLORS.find((c) => c.id === summary.who!.color) ??
-              CARD_COLORS[5];
-            return bump({
-              ...(el as Record<string, unknown>),
-              strokeColor: p.stroke,
-              backgroundColor: p.fill,
-              customData: {
-                ...prevCustom,
-                kind: SCHEDULE_BADGE_KIND,
-                cardId,
-                color: summary.who.color,
-              },
-            });
-          }
-
-          // 既存バッジ text: 1 文字更新 + ellipse 中央へ手動配置
-          if (
-            wantsBadge &&
-            hasBoth &&
-            existingBadgeText &&
-            existingBadgeEllipse &&
-            elId === existingBadgeText.id
-          ) {
-            const ex =
-              (existingBadgeEllipse.x as number | undefined) ?? card.x;
-            const ey =
-              (existingBadgeEllipse.y as number | undefined) ?? card.y;
-            const ew =
-              (existingBadgeEllipse.width as number | undefined) ?? 24;
-            const eh =
-              (existingBadgeEllipse.height as number | undefined) ?? 24;
-            const cLine = 14 * 1.25;
-            return bump({
-              ...(el as Record<string, unknown>),
-              text: badgeChar,
-              originalText: badgeChar,
-              x: ex,
-              y: ey + (eh - cLine) / 2,
-              width: ew,
-              height: cLine,
-              containerId: null,
-              autoResize: false,
-              groupIds: [cardId],
+              groupIds: [],
               textAlign: "center",
               verticalAlign: "middle",
             });
@@ -907,6 +899,46 @@ export default function WhiteboardCanvas({
 
       {/* ドラッグ中のプレビュー (viewport coords / fixed) */}
       {drag ? <CardPreview drag={drag} colorId={cardColor} /> : null}
+
+      {/* 担当者バッジ (HTML overlay)。Excalidraw 要素ではないため、カードの
+          リサイズやアスペクト比に干渉しない。社員マスターの color を反映。 */}
+      {cardBadges.length > 0 ? (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+          style={{ zIndex: 55 }}
+        >
+          {cardBadges.map(({ id, bounds, initial, color }) => {
+            const palette =
+              CARD_COLORS.find((c) => c.id === color) ?? CARD_COLORS[5];
+            const size = 22 * viewport.zoom;
+            const padding = 4 * viewport.zoom;
+            const left =
+              (bounds.x + viewport.scrollX) * viewport.zoom + padding;
+            const top =
+              (bounds.y + viewport.scrollY) * viewport.zoom + padding;
+            return (
+              <div
+                key={id}
+                className="absolute flex items-center justify-center font-medium text-slate-900"
+                style={{
+                  left,
+                  top,
+                  width: size,
+                  height: size,
+                  borderRadius: "50%",
+                  backgroundColor: palette.fill,
+                  border: `${Math.max(1, 1.5 * viewport.zoom)}px solid ${palette.stroke}`,
+                  fontSize: 12 * viewport.zoom,
+                  lineHeight: 1,
+                }}
+              >
+                {initial}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
 
       {/* 時刻同期 (PATCH) 中のカード上に表示するスピナー。
           シーン座標 → Excalidraw 表示エリア内のローカル座標へ変換。 */}

@@ -496,11 +496,6 @@ export function isScheduleLabelElement(
   return elementKind(el) === SCHEDULE_LABEL_KIND;
 }
 
-// カード中央のテキストは「顧客名のみ」。担当者は別途 ellipse バッジで表現する。
-export function formatScheduleLabel(args: { toWhom: string | null }): string {
-  return args.toWhom ?? "";
-}
-
 // 「佐藤 次郎」→「佐」、「田中太郎」→「田」、「John Smith」→「J」、未指定 → ""
 export function surnameInitial(name: string | null | undefined): string {
   if (!name) return "";
@@ -508,20 +503,41 @@ export function surnameInitial(name: string | null | undefined): string {
   return head[0] ?? "";
 }
 
-// 顧客名ラベルの bbox 計算: 単一行の高さでカードの縦中央に配置し、
-// 横方向は textAlign:center でカード幅内に中央寄せする。
-// containerId 経由の自動配置は updateScene 経路では再計算されないため使わない。
-export function scheduleLabelBounds(card: {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
+// カード中央のラベルは「顧客名のみ」を 1 行で表示する。担当者の 1 文字バッジは
+// 社員カラーで色付けしたいので Excalidraw 要素ではなく HTML オーバーレイで描画する
+// (Excalidraw 要素にすると groupIds でカードのリサイズが固定されてしまうため)。
+export function formatScheduleLabel(args: {
+  toWhom: { name: string } | null;
+}): string {
+  return args.toWhom?.name ?? "";
+}
+
+// テキスト幅をフォントから簡易推定 (CJK は full-width, ASCII は約 0.55em)。
+// canvas 計測ほどの精度は無いが、Excalidraw のバウンドテキスト初期配置には十分。
+function approxLabelWidth(text: string, fontSize: number): number {
+  let w = 0;
+  for (const ch of text) {
+    w += ch.charCodeAt(0) < 0x80 ? fontSize * 0.55 : fontSize;
+  }
+  return w;
+}
+
+// バウンドテキストとしての bbox 計算。
+// Excalidraw は text の x/y/width/height を実際のレンダリング位置として使うため、
+// 推定したテキスト寸法でカード中央に配置する。Excalidraw のリサイズハンドラが
+// containerId 経由でこの座標を再計算してくれる。
+export function scheduleLabelBounds(args: {
+  card: { x: number; y: number; width: number; height: number };
+  text: string;
+  fontSize?: number;
 }): { x: number; y: number; width: number; height: number } {
-  const lineHeight = 14 * 1.25;
+  const fontSize = args.fontSize ?? 14;
+  const lineHeight = fontSize * 1.25;
+  const textW = Math.min(approxLabelWidth(args.text, fontSize), args.card.width);
   return {
-    x: card.x,
-    y: card.y + (card.height - lineHeight) / 2,
-    width: card.width,
+    x: args.card.x + (args.card.width - textW) / 2,
+    y: args.card.y + (args.card.height - lineHeight) / 2,
+    width: textW,
     height: lineHeight,
   };
 }
@@ -532,7 +548,7 @@ export function createScheduleLabelElement(args: {
   text: string;
 }): Record<string, unknown> {
   const id = `lbl:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
-  const b = scheduleLabelBounds(args.card);
+  const b = scheduleLabelBounds({ card: args.card, text: args.text });
   return {
     id,
     type: "text",
@@ -553,7 +569,9 @@ export function createScheduleLabelElement(args: {
     version: 1,
     versionNonce: Math.floor(Math.random() * 2 ** 31),
     isDeleted: false,
-    groupIds: [args.cardId],
+    // groupIds は使わない: Excalidraw のグループリサイズが card のアスペクト比を
+    // 維持しようとしてしまうため。代わりに containerId で結ぶ。
+    groupIds: [],
     frameId: null,
     boundElements: null,
     updated: Date.now(),
@@ -567,14 +585,15 @@ export function createScheduleLabelElement(args: {
     originalText: args.text,
     textAlign: "center",
     verticalAlign: "middle",
-    containerId: null,
+    // containerId 経由でカードに結ぶことで、ユーザリサイズ時に Excalidraw が
+    // バウンドテキスト位置を再計算してくれる。
+    containerId: args.cardId,
     autoResize: false,
     lineHeight: 1.25,
   };
 }
 
-// 担当者を表す丸バッジ。ellipse + 中央 1 文字テキストの 2 要素ペア。
-// 親カードと同じ groupIds: [cardId] で紐付け、Excalidraw のグループ選択で一緒に動く。
+// 旧バッジ要素の kind 定数 (新規生成は無いが、既存データのクリーンアップ用に残す)
 export const SCHEDULE_BADGE_KIND = "schedule-badge-v1";
 export const SCHEDULE_BADGE_TEXT_KIND = "schedule-badge-text-v1";
 
@@ -583,94 +602,6 @@ export function isScheduleBadgeElement(
 ): boolean {
   const k = elementKind(el);
   return k === SCHEDULE_BADGE_KIND || k === SCHEDULE_BADGE_TEXT_KIND;
-}
-
-const BADGE_DIAMETER = 24;
-
-export function createScheduleBadgeElements(args: {
-  cardId: string;
-  card: { x: number; y: number };
-  color: CardColorId;
-  char: string;
-}): { ellipse: Record<string, unknown>; text: Record<string, unknown> } {
-  const palette = CARD_COLORS.find((c) => c.id === args.color) ?? CARD_COLORS[5];
-  const ellipseId = `bdg:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
-  const textId = `bdgt:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
-  // 左上の角にバッジ中心を合わせ、半分だけカード外にはみ出させる (FAB 風)。
-  // これでカード内のテキストエリアとは重ならない。
-  const x = args.card.x - BADGE_DIAMETER / 2;
-  const y = args.card.y - BADGE_DIAMETER / 2;
-  const ellipse: Record<string, unknown> = {
-    id: ellipseId,
-    type: "ellipse",
-    x,
-    y,
-    width: BADGE_DIAMETER,
-    height: BADGE_DIAMETER,
-    angle: 0,
-    strokeColor: palette.stroke,
-    backgroundColor: palette.fill,
-    fillStyle: "solid",
-    strokeWidth: 2,
-    strokeStyle: "solid",
-    roughness: 0,
-    opacity: 100,
-    roundness: null,
-    seed: Math.floor(Math.random() * 2 ** 31),
-    version: 1,
-    versionNonce: Math.floor(Math.random() * 2 ** 31),
-    isDeleted: false,
-    groupIds: [args.cardId],
-    frameId: null,
-    boundElements: null,
-    updated: Date.now(),
-    link: null,
-    locked: false,
-    index: null,
-    customData: { kind: SCHEDULE_BADGE_KIND, cardId: args.cardId, color: args.color },
-  };
-  // バッジ text は ellipse 中央に手動配置 (containerId なし)
-  const charLineHeight = 14 * 1.25;
-  const charBoxWidth = BADGE_DIAMETER;
-  const text: Record<string, unknown> = {
-    id: textId,
-    type: "text",
-    x,
-    y: y + (BADGE_DIAMETER - charLineHeight) / 2,
-    width: charBoxWidth,
-    height: charLineHeight,
-    angle: 0,
-    strokeColor: GRID.colorText,
-    backgroundColor: "transparent",
-    fillStyle: "solid",
-    strokeWidth: 1,
-    strokeStyle: "solid",
-    roughness: 0,
-    opacity: 100,
-    roundness: null,
-    seed: Math.floor(Math.random() * 2 ** 31),
-    version: 1,
-    versionNonce: Math.floor(Math.random() * 2 ** 31),
-    isDeleted: false,
-    groupIds: [args.cardId],
-    frameId: null,
-    boundElements: null,
-    updated: Date.now(),
-    link: null,
-    locked: false,
-    index: null,
-    customData: { kind: SCHEDULE_BADGE_TEXT_KIND, cardId: args.cardId },
-    fontSize: 14,
-    fontFamily: GRID.fontFamilyHelvetica,
-    text: args.char,
-    originalText: args.char,
-    textAlign: "center",
-    verticalAlign: "middle",
-    containerId: null,
-    autoResize: false,
-    lineHeight: 1.25,
-  };
-  return { ellipse, text };
 }
 
 // ドラッグ完了時に、選択された色とスナップ済み座標からカード element を生成する。
