@@ -1,7 +1,14 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useState, type FormEvent } from "react";
-import { Loader2, Pencil, X } from "lucide-react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
+import { Filter, Loader2, Pencil, X } from "lucide-react";
 import { CARD_COLORS, type CardColorId } from "@/lib/grid";
 
 type Master = { id: string; name: string; color: CardColorId };
@@ -30,24 +37,51 @@ const DAYS_JA = ["日", "月", "火", "水", "木", "金", "土"] as const;
 
 export function DataPanel({ open, onClose }: Props) {
   const [records, setRecords] = useState<Record[]>([]);
+  const [employees, setEmployees] = useState<Master[]>([]);
+  const [customers, setCustomers] = useState<Master[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // フィルタ条件 (空文字 = 未選択)。日付は YYYY-MM-DD 形式。
+  const [filterWhoId, setFilterWhoId] = useState<string>("");
+  const [filterToWhomId, setFilterToWhomId] = useState<string>("");
+  const [filterDateFrom, setFilterDateFrom] = useState<string>("");
+  const [filterDateTo, setFilterDateTo] = useState<string>("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/records");
-      const body = (await res.json().catch(() => ({}))) as {
+      const [recordsRes, employeesRes, customersRes] = await Promise.all([
+        fetch("/api/records"),
+        fetch("/api/employees"),
+        fetch("/api/customers"),
+      ]);
+      const recordsBody = (await recordsRes.json().catch(() => ({}))) as {
         records?: Record[];
         error?: string;
       };
-      if (!res.ok) {
-        setError(body.error ?? `読み込みに失敗しました (${res.status})`);
+      const employeesBody = (await employeesRes.json().catch(() => ({}))) as {
+        employees?: Master[];
+        error?: string;
+      };
+      const customersBody = (await customersRes.json().catch(() => ({}))) as {
+        customers?: Master[];
+        error?: string;
+      };
+      if (!recordsRes.ok || !employeesRes.ok || !customersRes.ok) {
+        setError(
+          recordsBody.error ??
+            employeesBody.error ??
+            customersBody.error ??
+            "読み込みに失敗しました",
+        );
         return;
       }
-      setRecords(body.records ?? []);
+      setRecords(recordsBody.records ?? []);
+      setEmployees(employeesBody.employees ?? []);
+      setCustomers(customersBody.customers ?? []);
     } catch (err) {
       setError((err as Error).message ?? "ネットワークエラー");
     } finally {
@@ -59,6 +93,36 @@ export function DataPanel({ open, onClose }: Props) {
     if (!open) return;
     load();
   }, [open, load]);
+
+  // フィルタ後の records (担当 / 顧客 / 日付範囲)。
+  const visibleRecords = useMemo(() => {
+    const fromMs = filterDateFrom ? dateOnlyToStartMs(filterDateFrom) : null;
+    const toMs = filterDateTo ? dateOnlyToEndMs(filterDateTo) : null;
+    return records.filter((r) => {
+      if (filterWhoId && r.who?.id !== filterWhoId) return false;
+      if (filterToWhomId && r.toWhom?.id !== filterToWhomId) return false;
+      if (fromMs !== null || toMs !== null) {
+        const ms = new Date(r.date).getTime();
+        if (Number.isNaN(ms)) return false;
+        if (fromMs !== null && ms < fromMs) return false;
+        if (toMs !== null && ms > toMs) return false;
+      }
+      return true;
+    });
+  }, [records, filterWhoId, filterToWhomId, filterDateFrom, filterDateTo]);
+
+  const hasActiveFilter =
+    filterWhoId !== "" ||
+    filterToWhomId !== "" ||
+    filterDateFrom !== "" ||
+    filterDateTo !== "";
+
+  const resetFilters = () => {
+    setFilterWhoId("");
+    setFilterToWhomId("");
+    setFilterDateFrom("");
+    setFilterDateTo("");
+  };
 
   return (
     <div
@@ -101,6 +165,21 @@ export function DataPanel({ open, onClose }: Props) {
               {error}
             </p>
           ) : null}
+
+          <FilterBar
+            employees={employees}
+            customers={customers}
+            whoId={filterWhoId}
+            toWhomId={filterToWhomId}
+            dateFrom={filterDateFrom}
+            dateTo={filterDateTo}
+            onWhoIdChange={setFilterWhoId}
+            onToWhomIdChange={setFilterToWhomId}
+            onDateFromChange={setFilterDateFrom}
+            onDateToChange={setFilterDateTo}
+            onReset={resetFilters}
+            hasActive={hasActiveFilter}
+          />
         </div>
 
         <div className="min-h-0 flex-1 overflow-auto px-3 pb-3 pt-2">
@@ -110,9 +189,13 @@ export function DataPanel({ open, onClose }: Props) {
             </p>
           ) : records.length === 0 ? (
             <p className="text-[11px] text-slate-400">記録なし</p>
+          ) : visibleRecords.length === 0 ? (
+            <p className="text-[11px] text-slate-400">
+              フィルター条件に一致する記録がありません
+            </p>
           ) : (
             <RecordTable
-              records={records}
+              records={visibleRecords}
               editingId={editingId}
               onStartEdit={(id) => setEditingId(id)}
               onCancelEdit={() => setEditingId(null)}
@@ -127,6 +210,122 @@ export function DataPanel({ open, onClose }: Props) {
         </div>
       </div>
     </div>
+  );
+}
+
+function FilterBar({
+  employees,
+  customers,
+  whoId,
+  toWhomId,
+  dateFrom,
+  dateTo,
+  onWhoIdChange,
+  onToWhomIdChange,
+  onDateFromChange,
+  onDateToChange,
+  onReset,
+  hasActive,
+}: {
+  employees: Master[];
+  customers: Master[];
+  whoId: string;
+  toWhomId: string;
+  dateFrom: string;
+  dateTo: string;
+  onWhoIdChange: (id: string) => void;
+  onToWhomIdChange: (id: string) => void;
+  onDateFromChange: (s: string) => void;
+  onDateToChange: (s: string) => void;
+  onReset: () => void;
+  hasActive: boolean;
+}) {
+  return (
+    <div className="mt-2 rounded border border-slate-200 bg-slate-50 px-2 py-1.5">
+      <div className="mb-1 flex items-center justify-between">
+        <span className="inline-flex items-center gap-1 text-[10px] font-medium text-slate-600">
+          <Filter className="h-3 w-3" />
+          フィルター
+        </span>
+        {hasActive ? (
+          <button
+            type="button"
+            onClick={onReset}
+            className="text-[10px] text-slate-500 underline-offset-2 hover:text-slate-800 hover:underline"
+          >
+            リセット
+          </button>
+        ) : null}
+      </div>
+      <div className="grid grid-cols-2 gap-1.5">
+        <FilterSelect
+          label="担当"
+          value={whoId}
+          options={employees}
+          onChange={onWhoIdChange}
+        />
+        <FilterSelect
+          label="顧客"
+          value={toWhomId}
+          options={customers}
+          onChange={onToWhomIdChange}
+        />
+        <FilterDate label="日付 (開始)" value={dateFrom} onChange={onDateFromChange} />
+        <FilterDate label="日付 (終了)" value={dateTo} onChange={onDateToChange} />
+      </div>
+    </div>
+  );
+}
+
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Master[];
+  onChange: (id: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-[10px] text-slate-500">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-0.5 w-full rounded border border-neutral-300 bg-white px-1.5 py-0.5 text-[11px] focus:border-neutral-400 focus:ring-2 focus:ring-neutral-900/10 focus:outline-none"
+      >
+        <option value="">すべて</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function FilterDate({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (s: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-[10px] text-slate-500">{label}</span>
+      <input
+        type="date"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="mt-0.5 w-full rounded border border-neutral-300 bg-white px-1.5 py-0.5 text-[11px] focus:border-neutral-400 focus:ring-2 focus:ring-neutral-900/10 focus:outline-none"
+      />
+    </label>
   );
 }
 
@@ -407,6 +606,20 @@ function fromDtLocal(local: string): string | null {
   if (!local) return null;
   const d = new Date(local);
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+// "YYYY-MM-DD" → ローカル時刻のその日の 0:00 (ms)
+function dateOnlyToStartMs(s: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0).getTime();
+}
+
+// "YYYY-MM-DD" → ローカル時刻のその日の 23:59:59.999 (ms)
+function dateOnlyToEndMs(s: string): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 23, 59, 59, 999).getTime();
 }
 
 function fmtDate(iso: string): string {
