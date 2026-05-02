@@ -17,6 +17,7 @@ import {
   createScheduleLabelElement,
   formatScheduleLabel,
   GRID,
+  gridOriginXY,
   isCardElement,
   isGridFrameElement,
   SCHEDULE_BADGE_KIND,
@@ -237,38 +238,25 @@ export default function WhiteboardCanvas({
       const z = appState.zoom?.value ?? 1;
       const sx = (clientX - appState.offsetLeft) / z - appState.scrollX;
       const sy = (clientY - appState.offsetTop) / z - appState.scrollY;
-      const snapped = snapToHalfHourGrid(sx, sy);
-      const width = GRID.colWidth;
+
+      // 横幅は曜日カラムの半分。隣にもう1枚並べられるサイズにし、必要なら
+      // 後から手動でリサイズする。
+      const width = GRID.colWidth / 2;
       const height = GRID.rowHeight;
+      const origin = gridOriginXY();
+      // 横は「半カラム単位」で押下点が中心になるようスナップ。縦は30分単位。
+      const placedX =
+        Math.round((sx - width / 2 - origin.x) / width) * width + origin.x;
+      const placedY =
+        Math.round((sy - origin.y) / GRID.rowHeight) * GRID.rowHeight +
+        origin.y;
 
-      // 既存カードと矩形交差する位置への配置は中止 (既存の操作を阻害しない)
+      // 既存カードと重なっても OK。後から追加した要素が最前面に描画されるので
+      // 配列末尾に積むだけで Z 軸の重なりは自然に解決する。
       const elements = api.getSceneElements();
-      const overlaps = (
-        elements as Array<{
-          x?: number;
-          y?: number;
-          width?: number;
-          height?: number;
-          customData?: unknown;
-        }>
-      ).some((el) => {
-        if (!isCardElement(el)) return false;
-        const ex = el.x ?? 0;
-        const ey = el.y ?? 0;
-        const ew = el.width ?? 0;
-        const eh = el.height ?? 0;
-        return (
-          snapped.x < ex + ew &&
-          snapped.x + width > ex &&
-          snapped.y < ey + eh &&
-          snapped.y + height > ey
-        );
-      });
-      if (overlaps) return;
-
       const card = createCardElement({
-        x: snapped.x,
-        y: snapped.y,
+        x: placedX,
+        y: placedY,
         width,
         height,
         colorId: cardColor,
