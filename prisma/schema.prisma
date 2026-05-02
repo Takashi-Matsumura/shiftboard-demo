@@ -59,6 +59,7 @@ model Employee {
   updatedAt DateTime @updatedAt
 
   entries ScheduleEntry[]
+  records ScheduleRecord[] @relation("EmployeeRecords")
 }
 
 // 「誰に」で選択する顧客マスター。
@@ -70,6 +71,7 @@ model Customer {
   updatedAt DateTime @updatedAt
 
   entries ScheduleEntry[]
+  records ScheduleRecord[] @relation("CustomerRecords")
 }
 
 // 「何を」の業務マスター。
@@ -81,6 +83,7 @@ model Task {
   updatedAt DateTime @updatedAt
 
   entries ScheduleEntry[]
+  records ScheduleRecord[] @relation("TaskRecords")
 }
 
 // 1 枚のカード (Excalidraw 要素) に紐付く業務メタ情報。
@@ -105,5 +108,40 @@ model ScheduleEntry {
   @@index([cardId])
   @@index([whoId])
   @@index([whatId])
+  @@index([toWhomId])
+}
+
+// 「予定 / 実績」記録。日付が変わったタイミングで前日のカード状態を
+// `planned*` フィールドにスナップして 1 日 1 行 × 1 カードで保存する。
+// `actual*` はデータパネル UI から後追いで実績入力するための欄。
+// 同じ日 × 同じ cardId の二重登録は @@unique で防ぐ (snapshot は upsert で冪等)。
+model ScheduleRecord {
+  id             String    @id @default(cuid())
+  date           DateTime              // ローカル日付の 0:00 を UTC に正規化して保存
+  cardId         String                // 元のカード ID (Whiteboard.elements の rectangle.id)
+  whoId          String?
+  whatId         String?
+  toWhomId       String?
+
+  // 予定: snapshot 時に確定。以降は frozen
+  plannedStartAt DateTime?
+  plannedEndAt   DateTime?
+  plannedNotes   String   @default("")
+
+  // 実績: データパネルで後から書き込み
+  actualStartAt  DateTime?
+  actualEndAt    DateTime?
+  actualNotes    String   @default("")
+
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  who    Employee? @relation("EmployeeRecords", fields: [whoId],    references: [id], onDelete: SetNull)
+  what   Task?     @relation("TaskRecords",     fields: [whatId],   references: [id], onDelete: SetNull)
+  toWhom Customer? @relation("CustomerRecords", fields: [toWhomId], references: [id], onDelete: SetNull)
+
+  @@unique([date, cardId])
+  @@index([date])
+  @@index([whoId])
   @@index([toWhomId])
 }

@@ -490,6 +490,43 @@ export function cardBoundsToSchedule(args: {
   return { startAt, endAt };
 }
 
+// カード矩形からグリッド上のスロット (列・行) を抜き出す。
+// 日付は呼び出し側が後から決める。snapshot 時 (任意の過去日) のために使う。
+// - dow: 列インデックス (月=0..日=6)
+// - startMin30 / endMin30: hoursStart からの 30 分単位の行インデックス (start < end)
+// グリッド外なら null。
+export function cardBoundsToSlot(card: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}): { dow: number; startMin30: number; endMin30: number } | null {
+  const colStart = GRID.origin.x + GRID.labelGutter;
+  const rowStart = GRID.origin.y + GRID.headerHeight;
+
+  const startCol = Math.round((card.x - colStart) / GRID.colWidth);
+  const startMin = Math.round((card.y - rowStart) / GRID.rowHeight);
+  const endMin = Math.round((card.y + card.height - rowStart) / GRID.rowHeight);
+
+  if (startCol < 0 || startCol > 6) return null;
+  if (startMin < 0 || endMin <= startMin) return null;
+
+  return { dow: startCol, startMin30: startMin, endMin30: endMin };
+}
+
+// 指定の日付 (年月日) と 30 分単位の row index から DateTime を組み立てる。
+// startMin30=0 は hoursStart の 0 分。time 部はローカル時刻として設定する。
+export function slotToDateTime(date: Date, min30: number): Date {
+  const out = new Date(date);
+  out.setHours(
+    GRID.hoursStart + Math.floor(min30 / 2),
+    (min30 % 2) * 30,
+    0,
+    0,
+  );
+  return out;
+}
+
 // `cardBoundsToSchedule` の逆。startAt / endAt からカード矩形 (シーン座標) を導出。
 // グリッドはどの週でも同じ列構造なので weekOffset は不要 (曜日と時刻だけで決まる)。
 // 30 分単位にスナップする (15 分のような端数は最寄りに丸め)。
