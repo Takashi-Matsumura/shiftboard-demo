@@ -12,12 +12,14 @@ import {
   CARD_KIND,
   type CardColorId,
   createCardElement,
+  createScheduleLabelElement,
+  formatScheduleLabel,
   isCardElement,
   isGridFrameElement,
   snapToHalfHourGrid,
   stripGridElements,
 } from "@/lib/grid";
-import { ScheduleModal } from "./schedule-modal";
+import { ScheduleModal, type ScheduleLabelSummary } from "./schedule-modal";
 
 const SAVE_DEBOUNCE_MS = 1500;
 // 30 分グリッド最小サイズ未満のドラッグはクリック扱いで破棄
@@ -364,6 +366,102 @@ export default function WhiteboardCanvas({
     [cardSelection.ids, excalidrawAPI],
   );
 
+  // ScheduleModal で保存されたとき、対応するカードに「誰が／誰に」を
+  // bound text としてつける。既存のラベルがあればテキストを更新、空に
+  // なれば削除。Excalidraw の containerId 経由でカード中央に配置される。
+  const handleScheduleSaved = useCallback(
+    (cardId: string, summary: ScheduleLabelSummary) => {
+      if (!excalidrawAPI) return;
+      const text = formatScheduleLabel(summary);
+      const elements = excalidrawAPI.getSceneElements() as readonly Record<
+        string,
+        unknown
+      >[];
+      const card = elements.find((el) => el.id === cardId) as
+        | (Record<string, unknown> & {
+            id: string;
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+            boundElements?: { type: string; id: string }[] | null;
+            version?: number;
+          })
+        | undefined;
+      if (!card) return;
+      const bounds = card.boundElements ?? [];
+      const existingLabel = elements.find(
+        (el) =>
+          (el.customData as { kind?: string } | undefined)?.kind ===
+            "schedule-label-v1" &&
+          (el.customData as { cardId?: string } | undefined)?.cardId === cardId,
+      ) as (Record<string, unknown> & { id: string; version?: number }) | undefined;
+
+      let next: Record<string, unknown>[];
+      if (existingLabel) {
+        if (text === "") {
+          next = elements
+            .filter((el) => el.id !== existingLabel.id)
+            .map((el) =>
+              el.id === cardId
+                ? {
+                    ...el,
+                    boundElements: bounds.filter((b) => b.id !== existingLabel.id),
+                    version: ((el.version as number | undefined) ?? 0) + 1,
+                    versionNonce: Math.floor(Math.random() * 2 ** 31),
+                    updated: Date.now(),
+                  }
+                : el,
+            );
+        } else {
+          next = elements.map((el) =>
+            el.id === existingLabel.id
+              ? {
+                  ...el,
+                  text,
+                  originalText: text,
+                  version: ((el.version as number | undefined) ?? 0) + 1,
+                  versionNonce: Math.floor(Math.random() * 2 ** 31),
+                  updated: Date.now(),
+                }
+              : el,
+          );
+        }
+      } else if (text !== "") {
+        const label = createScheduleLabelElement({
+          cardId,
+          card: {
+            x: card.x,
+            y: card.y,
+            width: card.width,
+            height: card.height,
+          },
+          text,
+        });
+        const labelId = label.id as string;
+        next = [
+          ...elements.map((el) =>
+            el.id === cardId
+              ? {
+                  ...el,
+                  boundElements: [...bounds, { type: "text", id: labelId }],
+                  version: ((el.version as number | undefined) ?? 0) + 1,
+                  versionNonce: Math.floor(Math.random() * 2 ** 31),
+                  updated: Date.now(),
+                }
+              : el,
+          ),
+          label,
+        ];
+      } else {
+        return;
+      }
+
+      excalidrawAPI.updateScene({ elements: next as never });
+    },
+    [excalidrawAPI],
+  );
+
   useEffect(() => {
     const onBeforeUnload = () => {
       if (saveTimerRef.current) {
@@ -550,6 +648,7 @@ export default function WhiteboardCanvas({
       <ScheduleModal
         cardId={activeCardId}
         onClose={() => setActiveCardId(null)}
+        onSaved={handleScheduleSaved}
       />
 
       {loadError ? (

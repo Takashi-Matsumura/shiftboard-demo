@@ -83,14 +83,16 @@ model Task {
 // cardId は createCardElement() が発番する "card:..." 形式の文字列。
 // who / what / toWhom はマスターからの選択 (未選択なら null)。
 model ScheduleEntry {
-  id        String   @id @default(cuid())
-  cardId    String   @unique
+  id        String    @id @default(cuid())
+  cardId    String    @unique
   whoId     String?
   whatId    String?
   toWhomId  String?
-  notes     String   @default("")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  startAt   DateTime?
+  endAt     DateTime?
+  notes     String    @default("")
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
   who    Employee? @relation(fields: [whoId], references: [id], onDelete: SetNull)
   what   Task?     @relation(fields: [whatId], references: [id], onDelete: SetNull)

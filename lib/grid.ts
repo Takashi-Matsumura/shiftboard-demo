@@ -424,6 +424,72 @@ export function isCardElement(el: { customData?: unknown } | null | undefined): 
   return elementKind(el) === CARD_KIND;
 }
 
+// カードの中央に表示する「誰が／誰に」のラベル text 要素。
+// containerId をカードに紐付けることで Excalidraw が自動的にカード中央に配置する。
+export const SCHEDULE_LABEL_KIND = "schedule-label-v1";
+
+export function isScheduleLabelElement(
+  el: { customData?: unknown } | null | undefined,
+): boolean {
+  return elementKind(el) === SCHEDULE_LABEL_KIND;
+}
+
+export function formatScheduleLabel(args: {
+  who: string | null;
+  toWhom: string | null;
+}): string {
+  const lines: string[] = [];
+  if (args.who) lines.push(args.who);
+  if (args.toWhom) lines.push(`→ ${args.toWhom}`);
+  return lines.join("\n");
+}
+
+export function createScheduleLabelElement(args: {
+  cardId: string;
+  card: { x: number; y: number; width: number; height: number };
+  text: string;
+}): Record<string, unknown> {
+  const id = `lbl:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+  return {
+    id,
+    type: "text",
+    x: args.card.x,
+    y: args.card.y,
+    width: args.card.width,
+    height: args.card.height,
+    angle: 0,
+    strokeColor: GRID.colorText,
+    backgroundColor: "transparent",
+    fillStyle: "solid",
+    strokeWidth: 1,
+    strokeStyle: "solid",
+    roughness: 0,
+    opacity: 100,
+    roundness: null,
+    seed: Math.floor(Math.random() * 2 ** 31),
+    version: 1,
+    versionNonce: Math.floor(Math.random() * 2 ** 31),
+    isDeleted: false,
+    groupIds: [],
+    frameId: null,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    index: null,
+    customData: { kind: SCHEDULE_LABEL_KIND, cardId: args.cardId },
+    fontSize: 14,
+    fontFamily: GRID.fontFamilyHelvetica,
+    text: args.text,
+    originalText: args.text,
+    textAlign: "center",
+    verticalAlign: "middle",
+    containerId: args.cardId,
+    autoResize: false,
+    lineHeight: 1.25,
+  };
+}
+
 // ドラッグ完了時に、選択された色とスナップ済み座標からカード element を生成する。
 // 保存は通常のユーザ要素として onChange → /api/whiteboard で行われるので、
 // ここでは特別な処理は要らない。

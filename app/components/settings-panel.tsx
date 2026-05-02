@@ -45,21 +45,24 @@ export function SettingsPanel({ open, onClose }: Props) {
         <div className="h-[calc(100%-2.25rem)] space-y-6 overflow-auto px-4 py-4">
           <MasterSection
             title="社員マスター"
-            description="「誰が」で選択できる社員を登録します。"
+            roleLabel="誰が"
+            description="スケジュールの担当者として選択できる社員を登録します。"
             collectionPath="/api/employees"
             collectionKey="employees"
             active={open}
           />
           <MasterSection
             title="業務マスター"
-            description="「何を」で選択できる業務を登録します。"
+            roleLabel="何を"
+            description="スケジュールの内容として選択できる業務を登録します。"
             collectionPath="/api/tasks"
             collectionKey="tasks"
             active={open}
           />
           <MasterSection
             title="顧客マスター"
-            description="「誰に」で選択できる顧客を登録します。"
+            roleLabel="誰に"
+            description="スケジュールの相手として選択できる顧客を登録します。"
             collectionPath="/api/customers"
             collectionKey="customers"
             active={open}
@@ -72,12 +75,14 @@ export function SettingsPanel({ open, onClose }: Props) {
 
 function MasterSection({
   title,
+  roleLabel,
   description,
   collectionPath,
   collectionKey,
   active,
 }: {
   title: string;
+  roleLabel: string;
   description: string;
   collectionPath: string;
   collectionKey: "employees" | "customers" | "tasks";
@@ -158,8 +163,13 @@ function MasterSection({
   return (
     <section>
       <header className="mb-2">
-        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
-        <p className="text-[11px] text-slate-500">{description}</p>
+        <div className="flex items-baseline gap-2">
+          <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+          <span className="rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 font-mono text-[10px] text-slate-600">
+            {roleLabel}
+          </span>
+        </div>
+        <p className="mt-0.5 text-[11px] text-slate-500">{description}</p>
       </header>
 
       <form onSubmit={add} className="mb-2 flex items-center gap-2">

@@ -12,6 +12,8 @@ type EntryBody = {
   whoId?: unknown;
   whatId?: unknown;
   toWhomId?: unknown;
+  startAt?: unknown;
+  endAt?: unknown;
   notes?: unknown;
 };
 
@@ -24,12 +26,20 @@ function pickNotes(v: unknown): string {
   return v.length > NOTES_MAX ? v.slice(0, NOTES_MAX) : v;
 }
 
+function pickDate(v: unknown): Date | null {
+  if (typeof v !== "string" || v === "") return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 const ENTRY_SELECT = {
   id: true,
   cardId: true,
   whoId: true,
   whatId: true,
   toWhomId: true,
+  startAt: true,
+  endAt: true,
   notes: true,
 } as const;
 
@@ -75,6 +85,8 @@ export async function PUT(
     whoId: pickOptionalId(body.whoId),
     whatId: pickOptionalId(body.whatId),
     toWhomId: pickOptionalId(body.toWhomId),
+    startAt: pickDate(body.startAt),
+    endAt: pickDate(body.endAt),
     notes: pickNotes(body.notes),
   };
 
