@@ -404,6 +404,14 @@ export const CARD_COLORS: ReadonlyArray<{
   { id: "slate", label: "灰", fill: "#e2e8f0", stroke: "#475569" },
 ];
 
+export const CARD_COLOR_IDS: ReadonlyArray<CardColorId> = CARD_COLORS.map(
+  (c) => c.id,
+);
+
+export function isCardColorId(value: unknown): value is CardColorId {
+  return typeof value === "string" && CARD_COLOR_IDS.includes(value as CardColorId);
+}
+
 // 30 分グリッドの原点 (左上のセル左上端)
 export function gridOriginXY(): { x: number; y: number } {
   return {
@@ -484,14 +492,34 @@ export function isScheduleLabelElement(
   return elementKind(el) === SCHEDULE_LABEL_KIND;
 }
 
-export function formatScheduleLabel(args: {
-  who: string | null;
-  toWhom: string | null;
-}): string {
-  const lines: string[] = [];
-  if (args.who) lines.push(args.who);
-  if (args.toWhom) lines.push(`→ ${args.toWhom}`);
-  return lines.join("\n");
+// カード中央のテキストは「顧客名のみ」。担当者は別途 ellipse バッジで表現する。
+export function formatScheduleLabel(args: { toWhom: string | null }): string {
+  return args.toWhom ?? "";
+}
+
+// 「佐藤 次郎」→「佐」、「田中太郎」→「田」、「John Smith」→「J」、未指定 → ""
+export function surnameInitial(name: string | null | undefined): string {
+  if (!name) return "";
+  const head = name.trim().split(/\s+/)[0] ?? "";
+  return head[0] ?? "";
+}
+
+// 顧客名ラベルの bbox 計算: 単一行の高さでカードの縦中央に配置し、
+// 横方向は textAlign:center でカード幅内に中央寄せする。
+// containerId 経由の自動配置は updateScene 経路では再計算されないため使わない。
+export function scheduleLabelBounds(card: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}): { x: number; y: number; width: number; height: number } {
+  const lineHeight = 14 * 1.25;
+  return {
+    x: card.x,
+    y: card.y + (card.height - lineHeight) / 2,
+    width: card.width,
+    height: lineHeight,
+  };
 }
 
 export function createScheduleLabelElement(args: {
@@ -500,13 +528,14 @@ export function createScheduleLabelElement(args: {
   text: string;
 }): Record<string, unknown> {
   const id = `lbl:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+  const b = scheduleLabelBounds(args.card);
   return {
     id,
     type: "text",
-    x: args.card.x,
-    y: args.card.y,
-    width: args.card.width,
-    height: args.card.height,
+    x: b.x,
+    y: b.y,
+    width: b.width,
+    height: b.height,
     angle: 0,
     strokeColor: GRID.colorText,
     backgroundColor: "transparent",
@@ -520,7 +549,7 @@ export function createScheduleLabelElement(args: {
     version: 1,
     versionNonce: Math.floor(Math.random() * 2 ** 31),
     isDeleted: false,
-    groupIds: [],
+    groupIds: [args.cardId],
     frameId: null,
     boundElements: null,
     updated: Date.now(),
@@ -534,10 +563,110 @@ export function createScheduleLabelElement(args: {
     originalText: args.text,
     textAlign: "center",
     verticalAlign: "middle",
-    containerId: args.cardId,
+    containerId: null,
     autoResize: false,
     lineHeight: 1.25,
   };
+}
+
+// 担当者を表す丸バッジ。ellipse + 中央 1 文字テキストの 2 要素ペア。
+// 親カードと同じ groupIds: [cardId] で紐付け、Excalidraw のグループ選択で一緒に動く。
+export const SCHEDULE_BADGE_KIND = "schedule-badge-v1";
+export const SCHEDULE_BADGE_TEXT_KIND = "schedule-badge-text-v1";
+
+export function isScheduleBadgeElement(
+  el: { customData?: unknown } | null | undefined,
+): boolean {
+  const k = elementKind(el);
+  return k === SCHEDULE_BADGE_KIND || k === SCHEDULE_BADGE_TEXT_KIND;
+}
+
+const BADGE_DIAMETER = 24;
+
+export function createScheduleBadgeElements(args: {
+  cardId: string;
+  card: { x: number; y: number };
+  color: CardColorId;
+  char: string;
+}): { ellipse: Record<string, unknown>; text: Record<string, unknown> } {
+  const palette = CARD_COLORS.find((c) => c.id === args.color) ?? CARD_COLORS[5];
+  const ellipseId = `bdg:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+  const textId = `bdgt:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+  // 左上の角にバッジ中心を合わせ、半分だけカード外にはみ出させる (FAB 風)。
+  // これでカード内のテキストエリアとは重ならない。
+  const x = args.card.x - BADGE_DIAMETER / 2;
+  const y = args.card.y - BADGE_DIAMETER / 2;
+  const ellipse: Record<string, unknown> = {
+    id: ellipseId,
+    type: "ellipse",
+    x,
+    y,
+    width: BADGE_DIAMETER,
+    height: BADGE_DIAMETER,
+    angle: 0,
+    strokeColor: palette.stroke,
+    backgroundColor: palette.fill,
+    fillStyle: "solid",
+    strokeWidth: 2,
+    strokeStyle: "solid",
+    roughness: 0,
+    opacity: 100,
+    roundness: null,
+    seed: Math.floor(Math.random() * 2 ** 31),
+    version: 1,
+    versionNonce: Math.floor(Math.random() * 2 ** 31),
+    isDeleted: false,
+    groupIds: [args.cardId],
+    frameId: null,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    index: null,
+    customData: { kind: SCHEDULE_BADGE_KIND, cardId: args.cardId, color: args.color },
+  };
+  // バッジ text は ellipse 中央に手動配置 (containerId なし)
+  const charLineHeight = 14 * 1.25;
+  const charBoxWidth = BADGE_DIAMETER;
+  const text: Record<string, unknown> = {
+    id: textId,
+    type: "text",
+    x,
+    y: y + (BADGE_DIAMETER - charLineHeight) / 2,
+    width: charBoxWidth,
+    height: charLineHeight,
+    angle: 0,
+    strokeColor: GRID.colorText,
+    backgroundColor: "transparent",
+    fillStyle: "solid",
+    strokeWidth: 1,
+    strokeStyle: "solid",
+    roughness: 0,
+    opacity: 100,
+    roundness: null,
+    seed: Math.floor(Math.random() * 2 ** 31),
+    version: 1,
+    versionNonce: Math.floor(Math.random() * 2 ** 31),
+    isDeleted: false,
+    groupIds: [args.cardId],
+    frameId: null,
+    boundElements: null,
+    updated: Date.now(),
+    link: null,
+    locked: false,
+    index: null,
+    customData: { kind: SCHEDULE_BADGE_TEXT_KIND, cardId: args.cardId },
+    fontSize: 14,
+    fontFamily: GRID.fontFamilyHelvetica,
+    text: args.char,
+    originalText: args.char,
+    textAlign: "center",
+    verticalAlign: "middle",
+    containerId: null,
+    autoResize: false,
+    lineHeight: 1.25,
+  };
+  return { ellipse, text };
 }
 
 // ドラッグ完了時に、選択された色とスナップ済み座標からカード element を生成する。
@@ -567,8 +696,8 @@ export function createCardElement(args: {
     strokeStyle: "solid",
     roughness: 0,
     opacity: 100,
-    // 角丸 (Excalidraw v0.18 系: roundness.type=3 で proportional radius)
-    roundness: { type: 3 },
+    // 四隅は正方形にする (角丸なし)
+    roundness: null,
     seed: Math.floor(Math.random() * 2 ** 31),
     version: 1,
     versionNonce: Math.floor(Math.random() * 2 ** 31),
