@@ -54,7 +54,7 @@ export function SettingsPanel({ open, onClose }: Props) {
   return (
     <div
       aria-hidden={!open}
-      className="fixed top-9 right-0 bottom-9 z-[75] w-1/2 [perspective:1500px]"
+      className="fixed top-9 right-0 bottom-9 z-[75] w-1/3 [perspective:1500px]"
       style={{ pointerEvents: open ? "auto" : "none" }}
     >
       <div
