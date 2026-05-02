@@ -31,6 +31,7 @@ export const GRID = {
   colorHeaderBg: "#f1f5f9", // slate-100
   colorSatBg: "#dbeafe", // blue-100
   colorSunBg: "#fee2e2", // red-100
+  colorTodayBg: "#93c5fd", // blue-300 (本日の曜日セル)
   fontSize: 14,
   fontSizeSmall: 11,
   fontFamilyHelvetica: 5, // Excalidraw の FONT_FAMILY.Helvetica
@@ -79,6 +80,7 @@ function rectangle(args: {
   bg: string;
   stroke: string;
   strokeWidth?: number;
+  opacity?: number;
 }): AnyElement {
   return {
     ...commonBase(args.id, args.seedSalt, args.kind ?? GRID_KIND_FRAME),
@@ -92,6 +94,7 @@ function rectangle(args: {
     fillStyle: "solid",
     strokeWidth: args.strokeWidth ?? 1,
     strokeStyle: "solid",
+    ...(args.opacity !== undefined ? { opacity: args.opacity } : {}),
   };
 }
 
@@ -327,6 +330,34 @@ export function buildDateOverlayElements(now: Date = new Date()): readonly unkno
   } = GRID;
 
   const monday = getMondayOfWeek(now);
+
+  // 表示中の週に「本日」が含まれていれば、その曜日セルをハイライトする。
+  // 透過させて下のヘッダーセル (土=blue-100 / 日=red-100 / 平日=slate-100) と
+  // 曜日テキスト (月/火/水/...) を透けさせる。
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const mondayMidnight = new Date(monday);
+  mondayMidnight.setHours(0, 0, 0, 0);
+  const diffDays = Math.round(
+    (today.getTime() - mondayMidnight.getTime()) / (24 * 60 * 60 * 1000),
+  );
+  if (diffDays >= 0 && diffDays < 7) {
+    els.push(
+      rectangle({
+        id: "gridmeta:todayCell",
+        seedSalt: 800,
+        kind: GRID_KIND_META,
+        x: origin.x + labelGutter + diffDays * colWidth,
+        y: origin.y,
+        w: colWidth,
+        h: headerHeight,
+        bg: GRID.colorTodayBg,
+        stroke: GRID.colorMajor,
+        strokeWidth: 1.5,
+        opacity: 55,
+      }),
+    );
+  }
 
   // 各曜日ヘッダ rect の右下に日付ラベル「5/4」など。中央の曜日テキストと干渉しないよう
   // 小さめのフォント・控えめな色で右下に寄せる。

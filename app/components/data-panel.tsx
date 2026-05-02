@@ -26,9 +26,6 @@ export function DataPanel({ open, onClose }: Props) {
         }}
       >
         <div className="flex h-9 items-center justify-between border-b border-slate-200 bg-slate-50 px-3">
-          <span className="font-mono text-xs font-medium text-slate-700">
-            データ
-          </span>
           <button
             type="button"
             onClick={onClose}
@@ -38,6 +35,9 @@ export function DataPanel({ open, onClose }: Props) {
           >
             <X className="h-4 w-4" />
           </button>
+          <span className="font-mono text-xs font-medium text-slate-700">
+            データ
+          </span>
         </div>
 
         <div className="h-[calc(100%-2.25rem)] overflow-auto px-4 py-4">

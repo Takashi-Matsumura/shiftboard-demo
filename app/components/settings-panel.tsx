@@ -18,6 +18,7 @@ const TABS: ReadonlyArray<{
   label: string;
   roleLabel: string;
   description: string;
+  placeholder: string;
   collectionPath: string;
   collectionKey: "employees" | "tasks" | "customers";
 }> = [
@@ -26,6 +27,7 @@ const TABS: ReadonlyArray<{
     label: "社員マスター",
     roleLabel: "誰が",
     description: "スケジュールの担当者として選択できる社員を登録します。",
+    placeholder: "社員名を入力 (例: 田中 太郎)",
     collectionPath: "/api/employees",
     collectionKey: "employees",
   },
@@ -34,6 +36,7 @@ const TABS: ReadonlyArray<{
     label: "業務マスター",
     roleLabel: "何を",
     description: "スケジュールの内容として選択できる業務を登録します。",
+    placeholder: "業務名を入力 (例: 打ち合わせ)",
     collectionPath: "/api/tasks",
     collectionKey: "tasks",
   },
@@ -42,6 +45,7 @@ const TABS: ReadonlyArray<{
     label: "顧客マスター",
     roleLabel: "誰に",
     description: "スケジュールの相手として選択できる顧客を登録します。",
+    placeholder: "顧客名を入力 (例: A 株式会社)",
     collectionPath: "/api/customers",
     collectionKey: "customers",
   },
@@ -112,6 +116,7 @@ export function SettingsPanel({ open, onClose }: Props) {
           <MasterSection
             key={current.id}
             description={current.description}
+            placeholder={current.placeholder}
             collectionPath={current.collectionPath}
             collectionKey={current.collectionKey}
             active={open}
@@ -124,11 +129,13 @@ export function SettingsPanel({ open, onClose }: Props) {
 
 function MasterSection({
   description,
+  placeholder,
   collectionPath,
   collectionKey,
   active,
 }: {
   description: string;
+  placeholder: string;
   collectionPath: string;
   collectionKey: "employees" | "customers" | "tasks";
   active: boolean;
@@ -243,7 +250,7 @@ function MasterSection({
           type="text"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="名前を入力"
+          placeholder={placeholder}
           className="flex-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs focus:border-neutral-400 focus:ring-2 focus:ring-neutral-900/10 focus:outline-none disabled:bg-neutral-100"
           disabled={adding}
         />
