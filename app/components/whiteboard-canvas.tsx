@@ -122,6 +122,10 @@ export default function WhiteboardCanvas({
   const boundsInitializedRef = useRef(false);
   const weekOffsetRef = useRef(weekOffset);
   weekOffsetRef.current = weekOffset;
+  // member ロール時、ロード直後の elements 一式。
+  // ドラッグ・リサイズ・削除など何らかの変更があった操作完了フレームで、
+  // updateScene でこの状態に戻すことで「動かせるけど離すと元に戻る」挙動にする。
+  const readOnlyInitialElementsRef = useRef<readonly unknown[] | null>(null);
 
   // mode 切替時には Excalidraw を完全に再マウントしたいので、key として state に乗せる
   const [mountKey, setMountKey] = useState(0);
@@ -403,22 +407,18 @@ export default function WhiteboardCanvas({
         locked: true,
       }));
 
-      const userRawElements = Array.isArray(wb?.elements) ? wb.elements : [];
-      // member ロールはカードを動かせないように要素単位で locked: true。
-      // viewModeEnabled だと Excalidraw 全体がハンドツールに固定され、
-      // カード選択 → 詳細 popover が開かなくなるため採用しない。
-      const userElements = readOnly
-        ? (userRawElements as Array<Record<string, unknown>>).map((el) => ({
-            ...el,
-            locked: true,
-          }))
-        : userRawElements;
+      const userElements = Array.isArray(wb?.elements) ? wb.elements : [];
       const appState = (wb?.appState ?? {}) as Record<string, unknown>;
 
       lastSavedVersionRef.current = getSceneVersion(userElements as never);
+      const allElements = [...tplLocked, ...dateOverlay, ...userElements];
+      // member ロール: ドラッグ・リサイズ・削除を見た目でも巻き戻すための初期状態。
+      // locked: true をかけると Excalidraw が要素を選択させなくなり詳細 popover が
+      // 開かなくなるため、locked は使わず onChange で revert する戦略。
+      readOnlyInitialElementsRef.current = readOnly ? allElements : null;
       if (!cancel) {
         setLoaded({
-          elements: [...tplLocked, ...dateOverlay, ...userElements],
+          elements: allElements,
           appState,
         });
       }
@@ -598,6 +598,28 @@ export default function WhiteboardCanvas({
     ) => {
       const currentMode = modeRef.current;
 
+      // readOnly (member): ドラッグ・リサイズ・削除など要素変更があった操作完了
+      // フレームで、ロード時の状態に巻き戻す。書き込み API は 403 で守られている
+      // が、見た目だけが動いてしまうのを防ぐ目的。viewers にとっては「動かない」
+      // と見える。
+      {
+        const btn =
+          (appState.cursorButton as "up" | "down" | undefined) ?? "up";
+        const initial = readOnlyInitialElementsRef.current;
+        if (
+          readOnly &&
+          btn === "up" &&
+          initial &&
+          currentMode !== "edit-template" &&
+          excalidrawAPI &&
+          getSceneVersion(elements as never) !==
+            getSceneVersion(initial as never)
+        ) {
+          excalidrawAPI.updateScene({ elements: initial });
+          return;
+        }
+      }
+
       // ビューポート (スクロール / ズーム) を ref と state に同期。スピナーの位置決めに使う。
       const rawZoom = appState.zoom as { value?: number } | number | undefined;
       const zoomValue =
@@ -772,7 +794,7 @@ export default function WhiteboardCanvas({
       };
       scheduleSave(userOnly, savedAppState);
     },
-    [scheduleSave, flushTimeSync],
+    [scheduleSave, flushTimeSync, readOnly, excalidrawAPI],
   );
 
   // ScheduleDetailPopover で保存されたとき、カードを「顧客カラー化 + 顧客名ラベル + 担当者バッジ」に同期する。
