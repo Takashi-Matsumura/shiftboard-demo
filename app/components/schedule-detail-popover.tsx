@@ -22,6 +22,7 @@ import {
   surnameInitial,
   type CardColorId,
 } from "@/lib/grid";
+import { useRole } from "./role-provider";
 
 type Option = { id: string; name: string; color: CardColorId };
 type Entry = {
@@ -226,6 +227,7 @@ export function ScheduleDetailPopover({
   onSaved,
   onDeleted,
 }: Props) {
+  const { isAdmin } = useRole();
   // 内部 cardId を分けて持ち、退場アニメ中もマウントを維持する
   const [internalCardId, setInternalCardId] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("entering");
@@ -327,7 +329,8 @@ export function ScheduleDetailPopover({
         setLoadedEntry(normalized);
         const empty = isEntryEmpty(normalized);
         setWasEmptyOnLoad(empty);
-        setMode(empty ? "edit" : "view");
+        // member は空エントリでも編集モードに入れない (常に view)。
+        setMode(empty && isAdmin ? "edit" : "view");
       } catch (err) {
         if (!cancelled) setError((err as Error).message ?? "ネットワークエラー");
       } finally {
@@ -383,6 +386,7 @@ export function ScheduleDetailPopover({
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (!internalCardId || saving) return;
+    if (!isAdmin) return;
     setError(null);
     setSaving(true);
     try {
@@ -432,6 +436,7 @@ export function ScheduleDetailPopover({
 
   const handleDelete = useCallback(async () => {
     if (!internalCardId || deleting) return;
+    if (!isAdmin) return;
     if (!window.confirm("このスケジュールを削除しますか？")) return;
     setError(null);
     setDeleting(true);
@@ -452,7 +457,7 @@ export function ScheduleDetailPopover({
     } finally {
       setDeleting(false);
     }
-  }, [internalCardId, deleting, onDeleted, onClose]);
+  }, [internalCardId, deleting, isAdmin, onDeleted, onClose]);
 
   if (!internalCardId || !placement) return null;
 
@@ -503,7 +508,7 @@ export function ScheduleDetailPopover({
                 ? "スケジュール作成"
                 : "スケジュール編集"}
           </h2>
-          {mode === "view" && !loading ? (
+          {mode === "view" && !loading && isAdmin ? (
             <button
               type="button"
               onClick={() => setMode("edit")}
@@ -537,6 +542,7 @@ export function ScheduleDetailPopover({
             notes={entry.notes}
             onDelete={handleDelete}
             deleting={deleting}
+            canDelete={isAdmin}
             error={error}
           />
         ) : (
@@ -565,6 +571,7 @@ function ScheduleView({
   notes,
   onDelete,
   deleting,
+  canDelete,
   error,
 }: {
   who: Option | null;
@@ -574,6 +581,7 @@ function ScheduleView({
   notes: string;
   onDelete: () => void;
   deleting: boolean;
+  canDelete: boolean;
   error: string | null;
 }) {
   const whoColor = COLOR_BY_ID[who?.color ?? "slate"];
@@ -672,21 +680,23 @@ function ScheduleView({
         ) : null}
       </div>
 
-      <div className="flex shrink-0 items-center justify-end border-t border-neutral-200 bg-neutral-50 px-5 py-3">
-        <button
-          type="button"
-          onClick={onDelete}
-          disabled={deleting}
-          className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
-        >
-          {deleting ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <Trash2 className="h-3 w-3" />
-          )}
-          <span>{deleting ? "削除中..." : "削除"}</span>
-        </button>
-      </div>
+      {canDelete ? (
+        <div className="flex shrink-0 items-center justify-end border-t border-neutral-200 bg-neutral-50 px-5 py-3">
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={deleting}
+            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-60"
+          >
+            {deleting ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Trash2 className="h-3 w-3" />
+            )}
+            <span>{deleting ? "削除中..." : "削除"}</span>
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }

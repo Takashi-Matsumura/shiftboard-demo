@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getUser } from "@/lib/user";
+import { requireAdmin } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
 import { cardBoundsToSlot, isCardElement, slotToDateTime } from "@/lib/grid";
 
@@ -10,8 +10,8 @@ export const dynamic = "force-dynamic";
 // 各 (date, cardId) は @@unique を効かせた upsert で冪等。
 // 二重実行時は update: {} で何も変えない (= 予定 frozen)。
 export async function POST(request: NextRequest) {
-  const user = await getUser(request);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const guard = await requireAdmin(request);
+  if (guard instanceof NextResponse) return guard;
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);

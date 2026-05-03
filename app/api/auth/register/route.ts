@@ -37,9 +37,14 @@ export async function POST(request: NextRequest) {
   }
 
   const passwordHash = await hashPassword(password);
-  const user = await prisma.user.create({ data: { username, passwordHash } });
+  // 新規登録は常に "member"。"admin" への昇格は管理画面経由でのみ行う。
+  const user = await prisma.user.create({
+    data: { username, passwordHash, role: "member" },
+  });
   const { cookieValue, expiresAt } = await createSession(user.id);
-  const res = NextResponse.json({ user: { id: user.id, username: user.username } });
+  const res = NextResponse.json({
+    user: { id: user.id, username: user.username, role: "member" as const },
+  });
   res.headers.set(
     "Set-Cookie",
     cookieHeader(SESSION_COOKIE, cookieValue, { expiresAt }),

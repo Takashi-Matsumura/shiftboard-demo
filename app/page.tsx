@@ -18,6 +18,7 @@ import {
 import { AccountBadge } from "./components/account-badge";
 import { DataPanel } from "./components/data-panel";
 import { SettingsPanel } from "./components/settings-panel";
+import { useRole } from "./components/role-provider";
 import { getISOWeek, getMondayOfWeek } from "@/lib/grid";
 
 const WhiteboardCanvas = dynamic(
@@ -30,8 +31,9 @@ type Mode = "view" | "edit-template";
 export default function Home() {
   const router = useRouter();
   // proxy.ts は Cookie の存在しか見ないため、無効 Cookie でも / が描画される。
-  // クライアント側で /api/auth/me を呼んで user が null なら /login へ送る。
-  const [authState, setAuthState] = useState<"loading" | "authed">("loading");
+  // クライアント側で RoleProvider が叩く /api/auth/me の結果を見て、
+  // user が null なら /login へ送る。
+  const { user, loading: authLoading, isAdmin } = useRole();
   const [mode, setMode] = useState<Mode>("view");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -52,30 +54,16 @@ export default function Home() {
   }, [weekOffset]);
 
   useEffect(() => {
-    let cancelled = false;
-    fetch("/api/auth/me")
-      .then((r) => r.json())
-      .then((data) => {
-        if (cancelled) return;
-        if (data?.user) {
-          setAuthState("authed");
-        } else {
-          router.replace("/login");
-        }
-      })
-      .catch(() => {
-        if (!cancelled) router.replace("/login");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [router]);
+    if (authLoading) return;
+    if (!user) router.replace("/login");
+  }, [authLoading, user, router]);
 
   // 認証完了後、未スナップショットの過去日 (= 最後の record + 1 日 〜 昨日) を
   // まとめて記録に書き出す。サーバ Cron を使わず、クライアント発火で catch-up。
   // また、開きっぱなしの場合に備えて翌 0:01 に再発火を仕込む (単発)。
+  // member は API 側で 403 になるためそもそも発火しない。
   useEffect(() => {
-    if (authState !== "authed") return;
+    if (authLoading || !user || !isAdmin) return;
     void fetch("/api/records/snapshot", { method: "POST" }).catch(() => {});
 
     const now = new Date();
@@ -86,7 +74,7 @@ export default function Home() {
       void fetch("/api/records/snapshot", { method: "POST" }).catch(() => {});
     }, ms);
     return () => clearTimeout(t);
-  }, [authState]);
+  }, [authLoading, user, isAdmin]);
 
   // ページ離脱時にロックを残さないよう、unmount で unlock を試みる
   useEffect(() => {
@@ -104,7 +92,7 @@ export default function Home() {
   }, [mode]);
 
   const enterEditMode = useCallback(async () => {
-    if (busy) return;
+    if (busy || !isAdmin) return;
     setError(null);
     setBusy(true);
     try {
@@ -120,7 +108,7 @@ export default function Home() {
     } finally {
       setBusy(false);
     }
-  }, [busy]);
+  }, [busy, isAdmin]);
 
   const exitEditMode = useCallback(async () => {
     if (busy) return;
@@ -141,7 +129,7 @@ export default function Home() {
     setError("他のユーザがテンプレ編集中のため書き込めませんでした");
   }, []);
 
-  if (authState === "loading") {
+  if (authLoading || !user) {
     return (
       <main className="fixed inset-0 flex items-center justify-center bg-neutral-50">
         <Loader2 className="h-5 w-5 animate-spin text-neutral-500" />
@@ -164,36 +152,38 @@ export default function Home() {
           <span className="font-mono text-xs font-medium text-slate-700">
             shiftboard-demo
           </span>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setDataOpen((v) => !v)}
-              className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
-                dataOpen
-                  ? "border-slate-700 bg-slate-700 text-white hover:bg-slate-800"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-              }`}
-              title="データパネルを開閉する"
-              aria-pressed={dataOpen}
-            >
-              <Database className="h-3 w-3" />
-              <span>データ</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setSettingsOpen((v) => !v)}
-              className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
-                settingsOpen
-                  ? "border-slate-700 bg-slate-700 text-white hover:bg-slate-800"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-              }`}
-              title="設定パネルを開閉する"
-              aria-pressed={settingsOpen}
-            >
-              <Settings className="h-3 w-3" />
-              <span>設定</span>
-            </button>
-          </div>
+          {isAdmin ? (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setDataOpen((v) => !v)}
+                className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
+                  dataOpen
+                    ? "border-slate-700 bg-slate-700 text-white hover:bg-slate-800"
+                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                }`}
+                title="データパネルを開閉する"
+                aria-pressed={dataOpen}
+              >
+                <Database className="h-3 w-3" />
+                <span>データ</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSettingsOpen((v) => !v)}
+                className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
+                  settingsOpen
+                    ? "border-slate-700 bg-slate-700 text-white hover:bg-slate-800"
+                    : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+                }`}
+                title="設定パネルを開閉する"
+                aria-pressed={settingsOpen}
+              >
+                <Settings className="h-3 w-3" />
+                <span>設定</span>
+              </button>
+            </div>
+          ) : null}
           {isEditing ? (
             <span className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
               テンプレ編集モード
@@ -264,34 +254,37 @@ export default function Home() {
         bottomOffset={36}
         showTools={showTools}
         onLockLost={handleLockLost}
+        readOnly={!isAdmin}
       />
 
       <footer className="fixed right-0 bottom-0 left-0 z-[60] flex h-9 items-center justify-between gap-3 border-t border-slate-200 bg-white/90 px-3 backdrop-blur-sm">
-        {/* 左: テンプレ枠 (スケジュール) の編集モード切替 */}
+        {/* 左: テンプレ枠 (スケジュール) の編集モード切替 — admin のみ */}
         <div className="flex items-center gap-2">
-          {isEditing ? (
-            <button
-              type="button"
-              onClick={exitEditMode}
-              disabled={busy}
-              className="inline-flex items-center gap-1 rounded border border-amber-500 bg-amber-500 px-2 py-0.5 text-[11px] font-medium text-white shadow-sm hover:bg-amber-600 disabled:opacity-60"
-              title="編集を終了して通常モードに戻る"
-            >
-              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-              <span>編集を終了</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={enterEditMode}
-              disabled={busy}
-              className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100 disabled:opacity-60"
-              title="スケジュール枠 (テンプレ) を編集する"
-            >
-              {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <LayoutGrid className="h-3 w-3" />}
-              <span>枠を編集</span>
-            </button>
-          )}
+          {isAdmin ? (
+            isEditing ? (
+              <button
+                type="button"
+                onClick={exitEditMode}
+                disabled={busy}
+                className="inline-flex items-center gap-1 rounded border border-amber-500 bg-amber-500 px-2 py-0.5 text-[11px] font-medium text-white shadow-sm hover:bg-amber-600 disabled:opacity-60"
+                title="編集を終了して通常モードに戻る"
+              >
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                <span>編集を終了</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={enterEditMode}
+                disabled={busy}
+                className="inline-flex items-center gap-1 rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-100 disabled:opacity-60"
+                title="スケジュール枠 (テンプレ) を編集する"
+              >
+                {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <LayoutGrid className="h-3 w-3" />}
+                <span>枠を編集</span>
+              </button>
+            )
+          ) : null}
         </div>
 
         {/* 中央: カード操作 (パレットは WhiteboardCanvas から portal で挿入される)。
@@ -305,29 +298,34 @@ export default function Home() {
           </div>
         </div>
 
-        {/* 右: Excalidraw ツール群の表示トグル */}
-        <button
-          type="button"
-          onClick={() => setShowTools((v) => !v)}
-          className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
-            showTools
-              ? "border-slate-700 bg-slate-700 text-white hover:bg-slate-800"
-              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
-          }`}
-          title="Excalidraw のツールバー・メニューの表示を切り替える"
-          aria-pressed={showTools}
-        >
-          <Wrench className="h-3 w-3" />
-          <span>ツール {showTools ? "ON" : "OFF"}</span>
-        </button>
+        {/* 右: Excalidraw ツール群の表示トグル — admin のみ */}
+        {isAdmin ? (
+          <button
+            type="button"
+            onClick={() => setShowTools((v) => !v)}
+            className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition ${
+              showTools
+                ? "border-slate-700 bg-slate-700 text-white hover:bg-slate-800"
+                : "border-slate-300 bg-white text-slate-700 hover:bg-slate-100"
+            }`}
+            title="Excalidraw のツールバー・メニューの表示を切り替える"
+            aria-pressed={showTools}
+          >
+            <Wrench className="h-3 w-3" />
+            <span>ツール {showTools ? "ON" : "OFF"}</span>
+          </button>
+        ) : null}
       </footer>
 
-      <DataPanel open={dataOpen} onClose={() => setDataOpen(false)} />
-
-      <SettingsPanel
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-      />
+      {isAdmin ? (
+        <>
+          <DataPanel open={dataOpen} onClose={() => setDataOpen(false)} />
+          <SettingsPanel
+            open={settingsOpen}
+            onClose={() => setSettingsOpen(false)}
+          />
+        </>
+      ) : null}
     </main>
   );
 }

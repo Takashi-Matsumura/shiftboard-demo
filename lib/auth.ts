@@ -62,7 +62,13 @@ export async function destroySessionByCookie(rawCookie: string): Promise<void> {
   await prisma.session.deleteMany({ where: { token } });
 }
 
-export type SessionUser = { id: string; username: string };
+export type Role = "admin" | "member";
+export type SessionUser = { id: string; username: string; role: Role };
+
+// DB 列が壊れていても安全側 (member) に倒すための narrow。
+export function asRole(value: string): Role {
+  return value === "admin" ? "admin" : "member";
+}
 
 export async function resolveSessionCookie(
   rawCookie: string | undefined,
@@ -79,7 +85,11 @@ export async function resolveSessionCookie(
     await prisma.session.delete({ where: { id: row.id } }).catch(() => {});
     return null;
   }
-  return { id: row.user.id, username: row.user.username };
+  return {
+    id: row.user.id,
+    username: row.user.username,
+    role: asRole(row.user.role),
+  };
 }
 
 export function cookieHeader(

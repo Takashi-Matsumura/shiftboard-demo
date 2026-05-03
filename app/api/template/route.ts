@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getUser } from "@/lib/user";
+import { getUser, requireAdmin } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
 import { isGridFrameElement } from "@/lib/grid";
 
@@ -43,8 +43,9 @@ export async function GET(request: NextRequest) {
 
 // 編集中ユーザのみ保存可能。editingBy === user.id でなければ 423。
 export async function PUT(request: NextRequest) {
-  const user = await getUser(request);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const guard = await requireAdmin(request);
+  if (guard instanceof NextResponse) return guard;
+  const user = guard;
 
   const raw = await request.text();
   if (raw.length > MAX_BYTES) {

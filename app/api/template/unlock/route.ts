@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getUser } from "@/lib/user";
+import { requireAdmin } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -10,8 +10,9 @@ const TEMPLATE_ID = "default";
 // 自分が保有しているロックのみ解放できる (他人のロックは触らない)。
 // 行がそもそも無い / editingBy が null なら冪等に 200。
 export async function POST(request: NextRequest) {
-  const user = await getUser(request);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const guard = await requireAdmin(request);
+  if (guard instanceof NextResponse) return guard;
+  const user = guard;
 
   const existing = await prisma.template.findUnique({ where: { id: TEMPLATE_ID } });
   if (!existing || !existing.editingBy) {
