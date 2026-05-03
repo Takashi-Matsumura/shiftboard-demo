@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { cookieHeader, createSession, SESSION_COOKIE, verifyPassword } from "@/lib/auth";
+import { asRole, cookieHeader, createSession, SESSION_COOKIE, verifyPassword } from "@/lib/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,7 +30,9 @@ export async function POST(request: NextRequest) {
   }
 
   const { cookieValue, expiresAt } = await createSession(user.id);
-  const res = NextResponse.json({ user: { id: user.id, username: user.username } });
+  const res = NextResponse.json({
+    user: { id: user.id, username: user.username, role: asRole(user.role) },
+  });
   res.headers.set(
     "Set-Cookie",
     cookieHeader(SESSION_COOKIE, cookieValue, { expiresAt }),

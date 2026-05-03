@@ -1,15 +1,15 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { Loader2, LogOut } from "lucide-react";
-
-type Me = { id: string; username: string } | null;
+import { Loader2, LogOut, Users } from "lucide-react";
+import { useRole } from "./role-provider";
 
 export function AccountBadge() {
   const router = useRouter();
-  const [me, setMe] = useState<Me>(null);
+  const { user: me, isAdmin, refresh } = useRole();
   const [loggingOut, setLoggingOut] = useState(false);
   const [transitioning, setTransitioning] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -17,16 +17,6 @@ export function AccountBadge() {
 
   useEffect(() => {
     setMounted(true);
-    let cancel = false;
-    fetch("/api/auth/me")
-      .then((r) => r.json())
-      .then((data) => {
-        if (!cancel) setMe((data?.user as Me) ?? null);
-      })
-      .catch(() => {});
-    return () => {
-      cancel = true;
-    };
   }, []);
 
   async function logout() {
@@ -45,6 +35,9 @@ export function AccountBadge() {
     if (elapsed < MIN_MS) {
       await new Promise((r) => setTimeout(r, MIN_MS - elapsed));
     }
+    // RoleProvider の user を null に戻す。これがないと /login にいる間も Provider が
+    // 旧ユーザを保持し続け、誤った状態で / に戻れてしまう。
+    await refresh();
     setTransitioning(true);
     router.replace("/login");
     router.refresh();
@@ -70,7 +63,30 @@ export function AccountBadge() {
   return (
     <>
       <span className="flex items-center gap-2 font-mono text-xs text-slate-500">
-        <span>{me ? me.username : "…"}</span>
+        <span>
+          {me ? me.username : "…"}
+          {me ? (
+            <span
+              className={`ml-1 rounded px-1 py-[1px] text-[10px] font-medium ${
+                isAdmin
+                  ? "bg-slate-700 text-white"
+                  : "bg-slate-200 text-slate-700"
+              }`}
+            >
+              {isAdmin ? "管理者" : "一般"}
+            </span>
+          ) : null}
+        </span>
+        {isAdmin ? (
+          <Link
+            href="/admin/users"
+            title="ユーザ管理"
+            className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-slate-500 hover:bg-slate-100"
+          >
+            <Users className="h-3.5 w-3.5" />
+            <span className="text-[11px]">ユーザ</span>
+          </Link>
+        ) : null}
         <button
           type="button"
           onClick={logout}

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getUser } from "@/lib/user";
+import { getUser, requireAdmin } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -66,8 +66,8 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ cardId: string }> },
 ) {
-  const user = await getUser(request);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const guard = await requireAdmin(request);
+  if (guard instanceof NextResponse) return guard;
 
   const { cardId } = await params;
   if (!CARD_ID_RE.test(cardId)) {
@@ -107,8 +107,8 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ cardId: string }> },
 ) {
-  const user = await getUser(request);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const guard = await requireAdmin(request);
+  if (guard instanceof NextResponse) return guard;
 
   const { cardId } = await params;
   if (!CARD_ID_RE.test(cardId)) {
@@ -131,8 +131,8 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ cardId: string }> },
 ) {
-  const user = await getUser(request);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const guard = await requireAdmin(request);
+  if (guard instanceof NextResponse) return guard;
 
   const { cardId } = await params;
   if (!CARD_ID_RE.test(cardId)) {

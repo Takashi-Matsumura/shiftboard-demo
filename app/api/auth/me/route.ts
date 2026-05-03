@@ -7,5 +7,7 @@ export const dynamic = "force-dynamic";
 export async function GET(request: NextRequest) {
   const user = await getUser(request);
   if (!user) return NextResponse.json({ user: null }, { status: 200 });
-  return NextResponse.json({ user: { id: user.id, username: user.username } });
+  return NextResponse.json({
+    user: { id: user.id, username: user.username, role: user.role },
+  });
 }

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getUser } from "@/lib/user";
+import { getUser, requireAdmin } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
 import { isCardColorId } from "@/lib/grid";
 
@@ -20,8 +20,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const user = await getUser(request);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const guard = await requireAdmin(request);
+  if (guard instanceof NextResponse) return guard;
 
   let body: { name?: unknown; color?: unknown };
   try {

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getUser } from "@/lib/user";
+import { requireAdmin } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -29,8 +29,8 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const user = await getUser(request);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const guard = await requireAdmin(request);
+  if (guard instanceof NextResponse) return guard;
 
   const { id } = await params;
   if (!id) return NextResponse.json({ error: "invalid id" }, { status: 400 });

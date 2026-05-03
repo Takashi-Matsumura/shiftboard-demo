@@ -85,6 +85,7 @@ export default function WhiteboardCanvas({
   bottomOffset = 0,
   showTools = false,
   onLockLost,
+  readOnly = false,
 }: {
   mode?: WhiteboardCanvasMode;
   // 表示する週を「今週」からの相対オフセット (週単位) で指定。0=今週、-1=先週、+1=来週
@@ -94,6 +95,8 @@ export default function WhiteboardCanvas({
   // Excalidraw のツールバー/メニュー等を表示するか。false なら zen mode で隠す。
   showTools?: boolean;
   onLockLost?: () => void;
+  // member ロール用: カードの追加/移動/リサイズ/書き戻しを一切させない閲覧専用モード。
+  readOnly?: boolean;
 }) {
   const [loaded, setLoaded] = useState<LoadedData>(null);
   const [loadError, setLoadError] = useState(false);
@@ -278,6 +281,7 @@ export default function WhiteboardCanvas({
 
   useEffect(() => {
     if (mode !== "view") return;
+    if (readOnly) return;
 
     const isInsideExcalidraw = (target: EventTarget | null): boolean => {
       if (!(target instanceof Element)) return false;
@@ -356,7 +360,7 @@ export default function WhiteboardCanvas({
       window.removeEventListener("pointercancel", onUp, true);
       cancelLongPress();
     };
-  }, [mode, cancelLongPress, triggerLongPressPlacement]);
+  }, [mode, readOnly, cancelLongPress, triggerLongPressPlacement]);
 
   // モード切替を検知して再ロード
   useEffect(() => {
@@ -399,7 +403,16 @@ export default function WhiteboardCanvas({
         locked: true,
       }));
 
-      const userElements = Array.isArray(wb?.elements) ? wb.elements : [];
+      const userRawElements = Array.isArray(wb?.elements) ? wb.elements : [];
+      // member ロールはカードを動かせないように要素単位で locked: true。
+      // viewModeEnabled だと Excalidraw 全体がハンドツールに固定され、
+      // カード選択 → 詳細 popover が開かなくなるため採用しない。
+      const userElements = readOnly
+        ? (userRawElements as Array<Record<string, unknown>>).map((el) => ({
+            ...el,
+            locked: true,
+          }))
+        : userRawElements;
       const appState = (wb?.appState ?? {}) as Record<string, unknown>;
 
       lastSavedVersionRef.current = getSceneVersion(userElements as never);
@@ -468,9 +481,13 @@ export default function WhiteboardCanvas({
     return () => {
       cancel = true;
     };
-  }, [mode, weekOffset]);
+  }, [mode, weekOffset, readOnly]);
 
   const flushSave = useCallback(() => {
+    if (readOnly) {
+      pendingRef.current = null;
+      return;
+    }
     const pending = pendingRef.current;
     if (!pending) return;
     pendingRef.current = null;
@@ -496,7 +513,7 @@ export default function WhiteboardCanvas({
         }
       })
       .catch((err) => console.warn("[whiteboard] save failed", err));
-  }, [onLockLost]);
+  }, [onLockLost, readOnly]);
 
   const scheduleSave = useCallback(
     (elements: readonly unknown[], appState: Record<string, unknown>) => {
@@ -511,6 +528,10 @@ export default function WhiteboardCanvas({
   // startAt / endAt を計算し /api/schedule/[cardId] へ PATCH する。
   const flushTimeSync = useCallback(async () => {
     timeSyncTimerRef.current = null;
+    if (readOnly) {
+      dirtyCardIdsRef.current.clear();
+      return;
+    }
     const ids = Array.from(dirtyCardIdsRef.current);
     dirtyCardIdsRef.current.clear();
     if (ids.length === 0) return;
@@ -559,7 +580,7 @@ export default function WhiteboardCanvas({
         }
       }),
     );
-  }, []);
+  }, [readOnly]);
 
   // unmount 時に表示用タイマーをクリーンアップ
   useEffect(() => {
@@ -1041,7 +1062,7 @@ export default function WhiteboardCanvas({
   // Shift+Alt 押下中のみ pointer-events: auto にしてイベントを横取りする。
   // ドラッグ開始後はキーが離されてもキャプチャを維持する。
 
-  const cardModeAvailable = mode === "view";
+  const cardModeAvailable = mode === "view" && !readOnly;
   const overlayActive = cardModeAvailable && (shiftAlt || drag !== null);
 
   const handleOverlayPointerDown = useCallback(

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getUser } from "@/lib/user";
+import { requireAdmin } from "@/lib/user";
 import { prisma } from "@/lib/prisma";
 
 export const runtime = "nodejs";
@@ -10,8 +10,9 @@ const TEMPLATE_ID = "default";
 // editingBy が null か自分なら成功、他人なら 409 Conflict を返す。
 // 行が無ければ作成しつつロックを取得（最初の編集者のため）。
 export async function POST(request: NextRequest) {
-  const user = await getUser(request);
-  if (!user) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  const guard = await requireAdmin(request);
+  if (guard instanceof NextResponse) return guard;
+  const user = guard;
 
   const existing = await prisma.template.findUnique({ where: { id: TEMPLATE_ID } });
 

@@ -4,9 +4,11 @@ import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
+import { useRole } from "../components/role-provider";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const { refresh } = useRole();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -41,6 +43,9 @@ export default function RegisterPage() {
         return;
       }
       setTransitioning(true);
+      // RoleProvider は layout 直下で mount 時 1 回しか /api/auth/me を叩かない。
+      // 遷移前に refresh しないと user=null のまま / に行き /login にループする。
+      await refresh();
       router.replace("/");
       router.refresh();
     } catch (err) {
